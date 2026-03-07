@@ -6,7 +6,6 @@ project(ssne_ai_demo)
 include(cmake_config/Paths.cmake)
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -O2")
-# 核心：禁用ABI变更提示
 add_compile_options(-Wno-psabi)
 
 add_executable(ssne_ai_demo ${PROJECT_SOURCE_DIR}/demo_face.cpp)
@@ -15,23 +14,27 @@ add_executable(ssne_ai_demo ${PROJECT_SOURCE_DIR}/demo_face.cpp)
 include_directories(${M1_SDK_INC_DIR})
 include_directories(${M1_SDK_INC_DIR}/smartsoc)
 
+# zbar头文件目录（按你实际路径调整）
+# 如果zbar头已在系统默认路径，可不加
+include_directories(${CMAKE_SOURCE_DIR}/third_party/zbar/include)
+
 # 定义调用目录来源
 set(SRC_DIR "src")
 set(TARGET $ENV{BASE_DIR}/target)
 include_directories(${CMAKE_SOURCE_DIR}/include)
 message([<mode>] "message to display" ${TARGET})
 
-
-# 添加source文件夹下的所有cpp文件
+# 添加source文件夹下的所有cpp文件（会自动包含 src/qr_decoder.cpp）
 file(GLOB SRC_FILES "${CMAKE_SOURCE_DIR}/${SRC_DIR}/*.cpp")
 target_sources(ssne_ai_demo PRIVATE ${SRC_FILES})
 
-target_link_libraries(${PROJECT_NAME} 
+target_link_libraries(${PROJECT_NAME}
                         ${M1_SSNE_LIB}
                         ${M1_CMABUFFER_LIB}
                         ${M1_SSZLOG_LIB}
                         ${M1_ZLOG_LIB}
                         ${M1_EMB_LIB}
+                        zbar
 )
 
 install(TARGETS ssne_ai_demo DESTINATION bin)
