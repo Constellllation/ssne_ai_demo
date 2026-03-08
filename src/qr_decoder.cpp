@@ -1,4 +1,4 @@
-#include "include/qr_decoder.hpp"
+#include "../include/qr_decoder.hpp"
 
 #include <cstring>
 
