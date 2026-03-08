@@ -73,19 +73,23 @@ struct GrayView {
     int stride = 0;
 };
 
-static bool TensorToGrayView(const ssne_tensor_t &t, GrayView *out) {
-    if (!out) return false;
-
-    // TODO: 按你SDK实际字段名修改以下4行
-    // 例如可能是: t.vir_addr / t.width / t.height / t.stride
-    out->data = reinterpret_cast<const uint8_t *>(t.vir_addr);
-    out->width = t.width;
-    out->height = t.height;
-    out->stride = t.stride;
-
-    if (!out->data || out->width <= 0 || out->height <= 0 || out->stride < out->width)
+static bool TensorToGrayView(const ssne_tensor_t &t, GrayView *out)
+{
+    if (!out)
         return false;
-    return true;
+
+    // 仅处理 Y8 输入
+    if (get_data_format(t) != SSNE_Y_8)
+        return false;
+
+    out->data = reinterpret_cast<const uint8_t *>(get_data(t));
+    out->width = static_cast<int>(get_width(t));
+    out->height = static_cast<int>(get_height(t));
+
+    // 当前这版 ssne_api.h 没有 stride 接口，先按紧凑 Y8 处理
+    out->stride = out->width;
+
+    return (out->data && out->width > 0 && out->height > 0);
 }
 // ============================================================
 
