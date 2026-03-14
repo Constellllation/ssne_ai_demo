@@ -90,6 +90,25 @@ struct GrayView {
     int stride = 0;
 };
 
+static bool TensorToGrayView(const ssne_tensor_t &t, GrayView *out) {
+    if (!out)
+        return false;
+
+    // 仅处理 Y8 输入
+    if (get_data_format(t) != SSNE_Y_8)
+        return false;
+
+    out->data = reinterpret_cast<const uint8_t *>(get_data(t));
+    out->width = static_cast<int>(get_width(t));
+    out->height = static_cast<int>(get_height(t));
+
+    // 当前这版 ssne_api.h 没有 stride 接口，先按紧凑 Y8 处理
+    out->stride = out->width;
+
+    return (out->data && out->width > 0 && out->height > 0);
+}
+// ============================================================
+
 static inline void DrawPixel(uint8_t *buf, int width, int height, int stride, int x, int y, uint8_t value) {
     if (!buf || x < 0 || y < 0 || x >= width || y >= height) return;
     buf[y * stride + x] = value;
@@ -118,37 +137,33 @@ static void DrawRect(uint8_t *buf, int width, int height, int stride,
 }
 
 static void DrawQrResultsOnView(ssne_tensor_t *out, const std::vector<QrDecodeResult> &results, int y_offset, int view_h) {
-    if (!out || !out->vir_addr || out->width <= 0 || out->height <= 0 || out->stride < out->width) return;
+    if (!out)
+        return;
+
+    if (get_data_format(*out) != SSNE_Y_8)
+        return;
+
+    uint8_t *buf = reinterpret_cast<uint8_t *>(get_data(*out));
+    const int width = static_cast<int>(get_width(*out));
+    const int height = static_cast<int>(get_height(*out));
+    // 当前 SDK 无 stride accessor，按紧凑 Y8 处理
+    const int stride = width;
+
+    if (!buf || width <= 0 || height <= 0)
+        return;
+
+    if (y_offset < 0 || y_offset >= height)
+        return;
+
+    const int draw_h = std::max(0, std::min(view_h, height - y_offset));
+    if (draw_h <= 0)
+        return;
 
     // output_sensor 是上下拼接图：上半部分=右路(640x480), 下半部分=左路
-    uint8_t *buf = reinterpret_cast<uint8_t *>(out->vir_addr);
-    const int width = out->width;
-    const int stride = out->stride;
-
     for (const auto &r : results) {
-        DrawRect(buf + y_offset * stride, width, view_h, stride, r.x1, r.y1, r.x2, r.y2, 255, 2);
+        DrawRect(buf + y_offset * stride, width, draw_h, stride, r.x1, r.y1, r.x2, r.y2, 255, 2);
     }
 }
-
-static bool TensorToGrayView(const ssne_tensor_t &t, GrayView *out)
-{
-    if (!out)
-        return false;
-
-    // 仅处理 Y8 输入
-    if (get_data_format(t) != SSNE_Y_8)
-        return false;
-
-    out->data = reinterpret_cast<const uint8_t *>(get_data(t));
-    out->width = static_cast<int>(get_width(t));
-    out->height = static_cast<int>(get_height(t));
-
-    // 当前这版 ssne_api.h 没有 stride 接口，先按紧凑 Y8 处理
-    out->stride = out->width;
-
-    return (out->data && out->width > 0 && out->height > 0);
-}
-// ============================================================
 
 void inference_thread_func() {
     cout << "[Thread] QR inference thread started!" << endl;

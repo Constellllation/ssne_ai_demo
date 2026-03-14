@@ -27,7 +27,22 @@ bool QrDecoder::DecodeY800(const uint8_t *gray, int width, int height, int strid
                            std::vector<QrDecodeResult> *results)
 {
     if (results)
-@@ -45,32 +46,52 @@ bool QrDecoder::DecodeY800(const uint8_t *gray, int width, int height, int strid
+        results->clear();
+
+    if (!scanner_ || !gray || !results || width <= 0 || height <= 0 || stride < width)
+        return false;
+
+    const size_t need = static_cast<size_t>(width) * static_cast<size_t>(height);
+    if (scratch_.size() < need)
+        scratch_.resize(need);
+
+    // stride==width 可直接整块拷贝，否则逐行拷贝
+    if (stride == width) {
+        memcpy(scratch_.data(), gray, need);
+    } else {
+        for (int y = 0; y < height; ++y) {
+            memcpy(scratch_.data() + static_cast<size_t>(y) * width,
+                   gray + static_cast<size_t>(y) * stride,
                    static_cast<size_t>(width));
         }
     }

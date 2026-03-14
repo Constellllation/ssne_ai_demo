@@ -33,3 +33,16 @@ set(M1_OSD_LIB         "${M1_SDK_LIB_DIR}/libosd.so"        CACHE STRING INTERNA
 set(M1_SSZLOG_LIB      "${M1_SDK_LIB_DIR}/libsszlog.so"     CACHE STRING INTERNAL)
 set(M1_ZLOG_LIB        "${M1_SDK_LIB_DIR}/libzlog.so"       CACHE STRING INTERNAL)
 set(M1_EMB_LIB         "${M1_SDK_LIB_DIR}/libemb.so"        CACHE STRING INTERNAL)
+
+# zbar: 优先使用SDK third_party中的库，避免交叉编译时出现 -lzbar 找不到
+find_library(M1_ZBAR_LIB
+    NAMES zbar libzbar
+    PATHS
+        "${THIRD_PARTY_DIR}/lib"
+        "${M1_SDK_LIB_DIR}"
+    NO_DEFAULT_PATH
+)
+if (NOT M1_ZBAR_LIB)
+    # fallback: 允许系统链接器自行解析（等价于 -lzbar）
+    set(M1_ZBAR_LIB zbar CACHE STRING INTERNAL FORCE)
+endif()
