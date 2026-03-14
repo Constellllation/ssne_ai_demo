@@ -5,37 +5,53 @@ project(ssne_ai_demo)
 # 引入路径配置文件
 include(cmake_config/Paths.cmake)
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -O2")
+set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O2")
 add_compile_options(-Wno-psabi)
 
-add_executable(ssne_ai_demo ${PROJECT_SOURCE_DIR}/demo_face.cpp)
+# 目录定义
+set(SRC_DIR ${CMAKE_SOURCE_DIR}/src)
+set(INC_DIR ${CMAKE_SOURCE_DIR}/include)
 
-# 添加头文件目录
-include_directories(${M1_SDK_INC_DIR})
-include_directories(${M1_SDK_INC_DIR}/smartsoc)
+# 你当前放置的 zbar 静态库路径
+set(ZBAR_STATIC_LIB ${CMAKE_SOURCE_DIR}/zbar/.libs/libzbar.a)
 
-# zbar头文件目录（按你实际路径调整）
-# 如果zbar头已在系统默认路径，可不加
-include_directories(${CMAKE_SOURCE_DIR}/third_party/zbar/include)
+# 可执行文件
+add_executable(ssne_ai_demo
+    ${PROJECT_SOURCE_DIR}/demo_face.cpp
+)
 
-# 定义调用目录来源
-set(SRC_DIR "src")
-set(TARGET $ENV{BASE_DIR}/target)
-include_directories(${CMAKE_SOURCE_DIR}/include)
-message([<mode>] "message to display" ${TARGET})
-
-# 添加source文件夹下的所有cpp文件（会自动包含 src/qr_decoder.cpp）
-file(GLOB SRC_FILES "${CMAKE_SOURCE_DIR}/${SRC_DIR}/*.cpp")
+# 添加 src 下所有 cpp（包含 qr_decoder.cpp）
+file(GLOB SRC_FILES "${SRC_DIR}/*.cpp")
 target_sources(ssne_ai_demo PRIVATE ${SRC_FILES})
 
-target_link_libraries(${PROJECT_NAME}
-                        ${M1_SSNE_LIB}
-                        ${M1_CMABUFFER_LIB}
-                        ${M1_OSD_LIB}
-                        ${M1_SSZLOG_LIB}
-                        ${M1_ZLOG_LIB}
-                        ${M1_EMB_LIB}
-                        ${M1_ZBAR_LIB}
+# 头文件路径
+# 说明：INC_DIR 里既有 zbar.h，也有 zbar/ 子目录（C++ 包装头）
+target_include_directories(ssne_ai_demo PRIVATE
+    ${INC_DIR}
+    ${M1_SDK_INC_DIR}
+    ${M1_SDK_INC_DIR}/smartsoc
+)
+
+# 检查 zbar 静态库存在
+if(NOT EXISTS ${ZBAR_STATIC_LIB})
+    message(FATAL_ERROR "zbar static library not found: ${ZBAR_STATIC_LIB}")
+endif()
+
+# 链接
+# 直接链接绝对路径，避免 -L/-l 路径问题
+target_link_libraries(ssne_ai_demo
+    ${M1_SSNE_LIB}
+    ${M1_CMABUFFER_LIB}
+    ${M1_SSZLOG_LIB}
+    ${M1_ZLOG_LIB}
+    ${M1_OSD_LIB}
+    ${M1_EMB_LIB}
+    ${ZBAR_STATIC_LIB}
+    pthread
+    m
+    # iconv   # 若后续提示 iconv 未定义，再打开
 )
 
 install(TARGETS ssne_ai_demo DESTINATION bin)
