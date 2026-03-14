@@ -10,6 +10,12 @@
 struct QrDecodeResult {
     std::string type;
     std::string data;
+
+    // 二维码包围框（像素坐标）
+    int x1 = 0;
+    int y1 = 0;
+    int x2 = 0;
+    int y2 = 0;
 };
 
 class QrDecoder {
