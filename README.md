@@ -511,6 +511,17 @@ ReleaseAIPreprocessPipe(pipe_offline);                                 // 释放
 - 双路检测结果独立处理
 - 双目图像上下拼接显示（640×960）
 - 坐标自动转换（第二路加480像素Y偏移）
+- 二维码识别框叠加显示（当前默认像素画框，可切换为OSD API）
 - 优雅退出和资源管理
+
+### 二维码叠加显示实现说明（OSD建议）
+
+当前 `demo_face.cpp` 已在主循环中预留叠加阶段，并默认采用 Y 平面直接画框方式。若目标板SDK提供 OSD 库，建议按下列顺序替换：
+
+1. 初始化：`osd_open_device` → `osd_init_device` → `osd_alloc_buffer` → `osd_create_layer` → `osd_set_layer_buffer`
+2. 每帧绘制：`osd_add_quad_rangle_layer` → `osd_flush_quad_rangle_layer`
+3. 释放：`osd_destroy_layer` → `osd_delete_buffer`
+
+构建时需链接：`libosd.so`、`libcmabuffer.so`、`libsszlog.so`、`libzlog.so`、`libemb.so`。
 
 演示程序会持续处理双目图像帧，主线程保证ISP debug的实时性，推理线程在后台异步处理人脸检测，在检测到人脸时分别在上下两个显示区域显示检测结果。

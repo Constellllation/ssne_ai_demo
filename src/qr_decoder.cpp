@@ -1,6 +1,7 @@
 #include "../include/qr_decoder.hpp"
 
 #include <cstring>
+#include <algorithm>
 
 QrDecoder::QrDecoder()
     : scanner_(zbar::zbar_image_scanner_create())
@@ -66,6 +67,26 @@ bool QrDecoder::DecodeY800(const uint8_t *gray, int width, int height, int strid
 
             const char *data = zbar::zbar_symbol_get_data(symbol);
             out.data = data ? data : "";
+
+            const int loc_count = zbar::zbar_symbol_get_loc_size(symbol);
+            if (loc_count > 0) {
+                int min_x = zbar::zbar_symbol_get_loc_x(symbol, 0);
+                int min_y = zbar::zbar_symbol_get_loc_y(symbol, 0);
+                int max_x = min_x;
+                int max_y = min_y;
+                for (int i = 1; i < loc_count; ++i) {
+                    const int x = zbar::zbar_symbol_get_loc_x(symbol, i);
+                    const int y = zbar::zbar_symbol_get_loc_y(symbol, i);
+                    min_x = std::min(min_x, x);
+                    min_y = std::min(min_y, y);
+                    max_x = std::max(max_x, x);
+                    max_y = std::max(max_y, y);
+                }
+                out.x1 = min_x;
+                out.y1 = min_y;
+                out.x2 = max_x;
+                out.y2 = max_y;
+            }
 
             results->push_back(out);
         }
