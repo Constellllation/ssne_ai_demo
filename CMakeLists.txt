@@ -14,9 +14,8 @@ add_executable(ssne_ai_demo ${PROJECT_SOURCE_DIR}/demo_face.cpp)
 include_directories(${M1_SDK_INC_DIR})
 include_directories(${M1_SDK_INC_DIR}/smartsoc)
 
-# zbar头文件目录（按你实际路径调整）
-# 如果zbar头已在系统默认路径，可不加
-include_directories(${CMAKE_SOURCE_DIR}/third_party/zbar/include)
+# zbar头文件目录：项目中 zbar 与 include 同级，两个目录都加入头文件搜索路径
+include_directories(${CMAKE_SOURCE_DIR}/zbar)
 
 # 定义调用目录来源
 set(SRC_DIR "src")
@@ -31,10 +30,11 @@ target_sources(ssne_ai_demo PRIVATE ${SRC_FILES})
 target_link_libraries(${PROJECT_NAME}
                         ${M1_SSNE_LIB}
                         ${M1_CMABUFFER_LIB}
+                        ${M1_OSD_LIB}
                         ${M1_SSZLOG_LIB}
                         ${M1_ZLOG_LIB}
                         ${M1_EMB_LIB}
-                        zbar
+                        ${M1_ZBAR_LIB}
 )
 
 install(TARGETS ssne_ai_demo DESTINATION bin)

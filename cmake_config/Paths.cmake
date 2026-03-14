@@ -14,8 +14,7 @@ set(M1_SDK_LIB_DIR "${SDK_ROOT}/lib" CACHE PATH "M1-SDK libraries directory")
 # 自定义库搜索路径
 set(CUSTOM_LIB_DIRS 
     "${SDK_ROOT}/lib"
-    "${THIRD_PARTY_DIR}/lib"
-    CACHE STRING "Custom library search paths"
+        CACHE STRING "Custom library search paths"
 )
 
 # 自定义头文件搜索路径
@@ -33,3 +32,22 @@ set(M1_OSD_LIB         "${M1_SDK_LIB_DIR}/libosd.so"        CACHE STRING INTERNA
 set(M1_SSZLOG_LIB      "${M1_SDK_LIB_DIR}/libsszlog.so"     CACHE STRING INTERNAL)
 set(M1_ZLOG_LIB        "${M1_SDK_LIB_DIR}/libzlog.so"       CACHE STRING INTERNAL)
 set(M1_EMB_LIB         "${M1_SDK_LIB_DIR}/libemb.so"        CACHE STRING INTERNAL)
+
+# zbar: 优先使用项目内置静态库，其次再查SDK/target绝对路径，避免链接阶段出现 -lzbar 找不到
+set(_M1_ZBAR_SEARCH_PATHS
+    "${CMAKE_SOURCE_DIR}/zbar/.libs"
+        "${M1_SDK_LIB_DIR}"
+    "$ENV{BASE_DIR}/target/lib"
+    "$ENV{BASE_DIR}/target/usr/lib"
+)
+
+find_library(M1_ZBAR_LIB
+    NAMES zbar libzbar
+    PATHS ${_M1_ZBAR_SEARCH_PATHS}
+    NO_DEFAULT_PATH
+)
+
+if (NOT M1_ZBAR_LIB)
+    message(FATAL_ERROR
+        "zbar library not found. Expected one of: ${CMAKE_SOURCE_DIR}/zbar/.libs/libzbar.a, project zbar/.libs, SDK lib, or target lib. You can also pass -DM1_ZBAR_LIB=/abs/path/to/libzbar.a")
+endif()
