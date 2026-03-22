@@ -1,24 +1,19 @@
-/*
- * @Author: Jingwen Bai
- * @Date: 2024-07-04 11:07:00
- * @Description: 
- * @Filename: osd-device.hpp
- */
 #ifndef SST_OSD_DEVICE_HPP_
 #define SST_OSD_DEVICE_HPP_
 
-#include <vector>
+#include <array>
 #include <string>
+#include <vector>
 
 #include "osd_lib_api.h"
 #include "common.hpp"
 
-#define BUFFER_TYPE_DMABUF  0x1
+#define BUFFER_TYPE_DMABUF 0x1
 #define OSD_LAYER_SIZE 5
 
-namespace sst{
-namespace device{
-namespace osd{
+namespace sst {
+namespace device {
+namespace osd {
 
 typedef struct {
     std::array<float, 4> box;
@@ -27,7 +22,7 @@ typedef struct {
     fdevice::QUADRANGLETYPE type;
     fdevice::ALPHATYPE alpha;
     int color;
-}OsdQuadRangle;
+} OsdQuadRangle;
 
 class OsdDevice {
 public:
@@ -37,35 +32,37 @@ public:
     void Initialize(int width, int height);
     void Release();
 
-    void Draw(std::vector<OsdQuadRangle> &quad_rangle);
-    void Draw(std::vector<std::array<float, 4>>& boxes, int border, int layer_id, fdevice::QUADRANGLETYPE type, fdevice::ALPHATYPE alpha, int color);
-    void Draw(std::vector<OsdQuadRangle> &quad_rangle, int layer_id);
+    void Draw(std::vector<OsdQuadRangle>& quad_rangle);
+    void Draw(std::vector<std::array<float, 4>>& boxes,
+              int border,
+              int layer_id,
+              fdevice::QUADRANGLETYPE type,
+              fdevice::ALPHATYPE alpha,
+              int color);
+    void Draw(std::vector<OsdQuadRangle>& quad_rangle, int layer_id);
+
+    void DrawQuads(const std::vector<std::array<std::array<float, 2>, 4>>& quads,
+                   int border,
+                   int layer_id,
+                   fdevice::QUADRANGLETYPE type,
+                   fdevice::ALPHATYPE alpha,
+                   int color);
 
 private:
     int LoadLutFile(const char* filename);
-    // void DrawTexture(const char* filename, int layer_id);
     void GenQrangleBox(std::array<float, 4>& det, int border);
+    void GenQranglePolygon(const std::array<std::array<float, 2>, 4>& pts, int border);
 
 private:
     handle_t m_osd_handle;
     std::string m_osd_lut_path = "/app_demo/app_assets/colorLUT.sscl";
-    // std::string m_texture_path = "/ai/imgs/test_24.ssbmp";
-    uint8_t *m_pcolor_lut = nullptr;
+    uint8_t* m_pcolor_lut = nullptr;
     int m_file_size = 0;
-    int m_height, m_width;
-    
+    int m_height = 0;
+    int m_width = 0;
     fdevice::DMA_BUFFER_ATTR_S m_layer_dma[OSD_LAYER_SIZE];
-    fdevice::VERTEXS_S m_qrangle_out={0}, m_qrangle_in={0};
+    fdevice::VERTEXS_S m_qrangle_out = {0}, m_qrangle_in = {0};
 };
-
-void DrawQuads(const std::vector<std::array<std::array<float, 2>, 4>>& quads,
-               int border,
-               int layer_id,
-               tagQUADRANGLETYPE type,
-               tagALPHATYPE alpha,
-               int color);
-
-void GenQranglePolygon(const std::array<std::array<float, 2>, 4>& pts, int border);
 
 } // namespace osd
 } // namespace device

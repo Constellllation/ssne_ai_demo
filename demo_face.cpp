@@ -1,5 +1,5 @@
 /*
- * @Filename: demo_face.cpp (QR + OSD polygon version)
+ * @Filename: demo_face.cpp (QR + OSD polygon version, low-latency + smoothing + ROI decode)
  */
 
 #include <array>
@@ -14,6 +14,7 @@
 #include <thread>
 #include <vector>
 #include <unistd.h>
+#include <cmath>
 
 #include "include/common.hpp"
 #include "include/utils.hpp"
@@ -28,15 +29,11 @@ std::atomic<bool> stop_inference(false);
 
 std::mutex g_param_mtx;
 
-// 四边形：4 个顶点
-struct QrQuad {
-    std::array<std::array<float, 2>, 4> corners;
-};
-
+// 坐标修正参数
 struct BoxTransformParams {
-    float kx = 1.00f;
+    float kx = 0.50f;
     float ky = 1.00f;
-    float dx = 0.0f;
+    float dx = -160.0f;
     float dy = 0.0f;
 };
 
@@ -53,6 +50,14 @@ static void PrintBoxParams() {
            g_box_params.kx, g_box_params.ky, g_box_params.dx, g_box_params.dy);
 }
 
+// ===================== 平滑状态 =====================
+struct SmoothedQuad {
+    bool valid = false;
+    std::array<std::array<float, 2>, 4> corners{};
+};
+
+SmoothedQuad g_right_smooth_quad;
+
 // 全局可视化器指针：推理线程直接画框
 VISUALIZER* g_visualizer = nullptr;
 
@@ -64,7 +69,8 @@ struct ImagePair {
 };
 
 std::queue<ImagePair> image_queue;
-const int MAX_QUEUE_SIZE = 2;
+// 只保留最新帧，尽量减少滞后
+const int MAX_QUEUE_SIZE = 1;
 
 // 全局退出标志（线程安全）
 bool g_exit_flag = false;
@@ -160,8 +166,71 @@ static bool TensorToGrayView(const ssne_tensor_t &t, GrayView *out) {
     return (out->data && out->width > 0 && out->height > 0);
 }
 
-// 把二维码四个顶点送给 OSD。
-// 这里仍然保留 KX/KY/DX/DY，方便你在线调试。
+struct GrayBuffer {
+    std::vector<uint8_t> data;
+    int width = 0;
+    int height = 0;
+    int stride = 0;
+};
+
+// 从原图裁 ROI，再做最近邻降采样
+static bool CropAndDownsampleGray(const GrayView& src,
+                                  int roi_x,
+                                  int roi_y,
+                                  int roi_w,
+                                  int roi_h,
+                                  int dst_w,
+                                  int dst_h,
+                                  GrayBuffer* out) {
+    if (!out) return false;
+    if (!src.data || src.width <= 0 || src.height <= 0 || src.stride < src.width) return false;
+    if (roi_x < 0 || roi_y < 0 || roi_w <= 0 || roi_h <= 0) return false;
+    if (roi_x + roi_w > src.width || roi_y + roi_h > src.height) return false;
+    if (dst_w <= 0 || dst_h <= 0) return false;
+
+    out->width = dst_w;
+    out->height = dst_h;
+    out->stride = dst_w;
+    out->data.resize(static_cast<size_t>(dst_w) * static_cast<size_t>(dst_h));
+
+    for (int dy = 0; dy < dst_h; ++dy) {
+        int sy = roi_y + (dy * roi_h) / dst_h;
+        const uint8_t* src_row = src.data + static_cast<size_t>(sy) * static_cast<size_t>(src.stride);
+        uint8_t* dst_row = out->data.data() + static_cast<size_t>(dy) * static_cast<size_t>(dst_w);
+
+        for (int dx = 0; dx < dst_w; ++dx) {
+            int sx = roi_x + (dx * roi_w) / dst_w;
+            dst_row[dx] = src_row[sx];
+        }
+    }
+
+    return true;
+}
+
+static void RemapQrResultsFromRoi(std::vector<QrDecodeResult>* results,
+                                  int roi_x,
+                                  int roi_y,
+                                  int roi_w,
+                                  int roi_h,
+                                  int dec_w,
+                                  int dec_h) {
+    if (!results) return;
+    if (roi_w <= 0 || roi_h <= 0 || dec_w <= 0 || dec_h <= 0) return;
+
+    const float sx = static_cast<float>(roi_w) / static_cast<float>(dec_w);
+    const float sy = static_cast<float>(roi_h) / static_cast<float>(dec_h);
+
+    for (auto& r : *results) {
+        if (!r.valid_polygon) continue;
+
+        for (int i = 0; i < 4; ++i) {
+            r.corners[i][0] = roi_x + r.corners[i][0] * sx;
+            r.corners[i][1] = roi_y + r.corners[i][1] * sy;
+        }
+    }
+}
+
+// ===================== 四点坐标修正 =====================
 static void PushQrQuads(const std::vector<QrDecodeResult>& qr_results,
                         int y_offset,
                         std::vector<QrQuad>* out_quads) {
@@ -191,7 +260,40 @@ static void PushQrQuads(const std::vector<QrDecodeResult>& qr_results,
     }
 }
 
+// ===================== 轻量平滑 =====================
+static void SmoothQuad(const QrQuad& input, SmoothedQuad* state, float alpha) {
+    if (!state) return;
+
+    if (!state->valid) {
+        state->corners = input.corners;
+        state->valid = true;
+        return;
+    }
+
+    for (int i = 0; i < 4; ++i) {
+        state->corners[i][0] =
+            alpha * input.corners[i][0] + (1.0f - alpha) * state->corners[i][0];
+        state->corners[i][1] =
+            alpha * input.corners[i][1] + (1.0f - alpha) * state->corners[i][1];
+    }
+}
+
+static bool IsQuadAlmostSame(const QrQuad& a, const SmoothedQuad& b, float thres) {
+    if (!b.valid) return false;
+
+    const float th2 = thres * thres;
+    for (int i = 0; i < 4; ++i) {
+        float dx = a.corners[i][0] - b.corners[i][0];
+        float dy = a.corners[i][1] - b.corners[i][1];
+        if ((dx * dx + dy * dy) > th2) {
+            return false;
+        }
+    }
+    return true;
+}
+
 void inference_thread_func(int img_height) {
+    (void)img_height; // 当前版本先只解码右路
     cout << "[Thread] QR inference thread started!" << endl;
 
     QrDecoder decoder;
@@ -199,7 +301,6 @@ void inference_thread_func(int img_height) {
     std::vector<QrQuad> local_quads;
 
     std::string last_right_payload;
-    std::string last_left_payload;
 
     while (!stop_inference) {
         ImagePair img_pair;
@@ -228,70 +329,77 @@ void inference_thread_func(int img_height) {
 
         local_quads.clear();
 
-        // ===================== 右路 / 上半屏 =====================
+        // ===================== 只解码右路 / 上半屏 =====================
         GrayView gv1;
         if (TensorToGrayView(img_pair.img1, &gv1)) {
-            bool ok = decoder.DecodeY800(
-                gv1.data, gv1.width, gv1.height, gv1.stride, &qr_results
+            // ROI：中间 75%
+            const int roi_x = gv1.width / 8;
+            const int roi_y = gv1.height / 8;
+            const int roi_w = gv1.width * 3 / 4;
+            const int roi_h = gv1.height * 3 / 4;
+
+            // 降分辨率到 320x240
+            const int dec_w = 320;
+            const int dec_h = 240;
+
+            GrayBuffer dec_buf;
+            bool prep_ok = CropAndDownsampleGray(
+                gv1,
+                roi_x, roi_y, roi_w, roi_h,
+                dec_w, dec_h,
+                &dec_buf
             );
 
-            if (ok && !qr_results.empty()) {
-                std::string current_payload = qr_results[0].data;
-                if (current_payload != last_right_payload) {
-                    for (size_t i = 0; i < qr_results.size(); ++i) {
-                        printf("[Frame %d] Right QR (%s): %s\n",
-                               img_pair.frame_id,
-                               qr_results[i].type.c_str(),
-                               qr_results[i].data.c_str());
+            if (prep_ok) {
+                bool ok = decoder.DecodeY800(
+                    dec_buf.data.data(),
+                    dec_buf.width,
+                    dec_buf.height,
+                    dec_buf.stride,
+                    &qr_results
+                );
 
-                        if (qr_results[i].valid_polygon) {
-                            printf("  P0=(%.1f,%.1f) P1=(%.1f,%.1f) P2=(%.1f,%.1f) P3=(%.1f,%.1f)\n",
-                                   qr_results[i].corners[0][0], qr_results[i].corners[0][1],
-                                   qr_results[i].corners[1][0], qr_results[i].corners[1][1],
-                                   qr_results[i].corners[2][0], qr_results[i].corners[2][1],
-                                   qr_results[i].corners[3][0], qr_results[i].corners[3][1]);
+                if (ok && !qr_results.empty()) {
+                    // 把低分辨率 ROI 坐标映射回原图坐标
+                    RemapQrResultsFromRoi(&qr_results, roi_x, roi_y, roi_w, roi_h, dec_w, dec_h);
+
+                    std::string current_payload = qr_results[0].data;
+                    if (current_payload != last_right_payload) {
+                        for (size_t i = 0; i < qr_results.size(); ++i) {
+                            printf("[Frame %d] Right QR (%s): %s\n",
+                                   img_pair.frame_id,
+                                   qr_results[i].type.c_str(),
+                                   qr_results[i].data.c_str());
                         }
+                        last_right_payload = current_payload;
                     }
-                    last_right_payload = current_payload;
+
+                    PushQrQuads(qr_results, 0, &local_quads);
                 }
-
-                PushQrQuads(qr_results, 0, &local_quads);
-            }
-        }
-
-        // ===================== 左路 / 下半屏 =====================
-        GrayView gv2;
-        if (TensorToGrayView(img_pair.img2, &gv2)) {
-            bool ok = decoder.DecodeY800(
-                gv2.data, gv2.width, gv2.height, gv2.stride, &qr_results
-            );
-
-            if (ok && !qr_results.empty()) {
-                std::string current_payload = qr_results[0].data;
-                if (current_payload != last_left_payload) {
-                    for (size_t i = 0; i < qr_results.size(); ++i) {
-                        printf("[Frame %d] Left QR (%s): %s\n",
-                               img_pair.frame_id,
-                               qr_results[i].type.c_str(),
-                               qr_results[i].data.c_str());
-
-                        if (qr_results[i].valid_polygon) {
-                            printf("  P0=(%.1f,%.1f) P1=(%.1f,%.1f) P2=(%.1f,%.1f) P3=(%.1f,%.1f)\n",
-                                   qr_results[i].corners[0][0], qr_results[i].corners[0][1],
-                                   qr_results[i].corners[1][0], qr_results[i].corners[1][1],
-                                   qr_results[i].corners[2][0], qr_results[i].corners[2][1],
-                                   qr_results[i].corners[3][0], qr_results[i].corners[3][1]);
-                        }
-                    }
-                    last_left_payload = current_payload;
-                }
-
-                PushQrQuads(qr_results, img_height, &local_quads);
             }
         }
 
         if (g_visualizer != nullptr) {
-            g_visualizer->DrawQuads(local_quads);
+            if (!local_quads.empty()) {
+                // 只画第一个二维码，先保证稳定
+                QrQuad current = local_quads[0];
+
+                // 轻量去抖：变化极小时沿用上一帧
+                if (!IsQuadAlmostSame(current, g_right_smooth_quad, 2.0f)) {
+                    SmoothQuad(current, &g_right_smooth_quad, 0.75f);
+                }
+
+                std::vector<QrQuad> draw_quads;
+                QrQuad draw_quad;
+                draw_quad.corners = g_right_smooth_quad.corners;
+                draw_quads.push_back(draw_quad);
+
+                g_visualizer->DrawQuads(draw_quads);
+            } else {
+                g_right_smooth_quad.valid = false;
+                std::vector<QrQuad> empty_quads;
+                g_visualizer->DrawQuads(empty_quads);
+            }
         }
     }
 
@@ -362,6 +470,7 @@ int main() {
         {
             std::unique_lock<std::mutex> lock(mtx_image);
 
+            // 队列满时丢旧帧，保留最新帧
             if (image_queue.size() >= MAX_QUEUE_SIZE) {
                 image_queue.pop();
             }

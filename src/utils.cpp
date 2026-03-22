@@ -1,14 +1,6 @@
-/*
- * @Filename: utils.cpp
- */
 #include "../include/utils.hpp"
 
-#include <array>
 #include <vector>
-
-/*******************************
- * VISUALIZER 实现
- *******************************/
 
 void VISUALIZER::Initialize(std::array<int, 2>& in_img_shape) {
     osd_device.Initialize(in_img_shape[0], in_img_shape[1]);
@@ -20,13 +12,12 @@ void VISUALIZER::Draw() {
 
     q.color = 1;
     q.box = {150.0f, 120.0f, 500.0f, 320.0f};
-    q.border = 8;
+    q.border = 2;
     q.layer_id = 0;
     q.alpha = fdevice::TYPE_ALPHA100;
     q.type = fdevice::TYPE_HOLLOW;
 
     quad_rangle_vec.emplace_back(q);
-
     osd_device.Draw(quad_rangle_vec, 0);
 }
 
@@ -36,22 +27,16 @@ void VISUALIZER::Draw(const std::vector<std::array<float, 4>>& boxes) {
 
     for (size_t i = 0; i < boxes.size(); ++i) {
         sst::device::osd::OsdQuadRangle q;
-
         q.box = {boxes[i][0], boxes[i][1], boxes[i][2], boxes[i][3]};
         q.color = 1;
         q.border = 2;
         q.layer_id = 0;
         q.alpha = fdevice::TYPE_ALPHA100;
         q.type = fdevice::TYPE_HOLLOW;
-
         quad_rangle_vec.emplace_back(q);
     }
 
     osd_device.Draw(quad_rangle_vec, 0);
-}
-
-void VISUALIZER::Release() {
-    osd_device.Release();
 }
 
 void VISUALIZER::DrawQuads(const std::vector<QrQuad>& quads) {
@@ -64,10 +49,13 @@ void VISUALIZER::DrawQuads(const std::vector<QrQuad>& quads) {
 
     osd_device.DrawQuads(
         osd_quads,
-        2,                        // border
-        0,                        // layer_id
+        2,
+        0,
         fdevice::TYPE_HOLLOW,
         fdevice::TYPE_ALPHA100,
-        1                         // color
-    );
+        1);
+}
+
+void VISUALIZER::Release() {
+    osd_device.Release();
 }

@@ -45,8 +45,7 @@ bool QrDecoder::DecodeY800(const uint8_t* gray,
             std::memcpy(
                 scratch_.data() + static_cast<size_t>(y) * static_cast<size_t>(width),
                 gray + static_cast<size_t>(y) * static_cast<size_t>(stride),
-                static_cast<size_t>(width)
-            );
+                static_cast<size_t>(width));
         }
     }
 
@@ -59,8 +58,7 @@ bool QrDecoder::DecodeY800(const uint8_t* gray,
     zbar::zbar_image_set_size(
         image,
         static_cast<unsigned int>(width),
-        static_cast<unsigned int>(height)
-    );
+        static_cast<unsigned int>(height));
     zbar::zbar_image_set_data(image, scratch_.data(), need, nullptr);
 
     const int n = zbar::zbar_scan_image(scanner_, image);

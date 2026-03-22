@@ -1,10 +1,11 @@
 #ifndef SSNE_AI_DEMO_QR_DECODER_HPP
 #define SSNE_AI_DEMO_QR_DECODER_HPP
 
+#include <array>
 #include <cstdint>
 #include <string>
 #include <vector>
-#include <array>
+
 #include "zbar.h"
 
 struct QrDecodeResult {
@@ -18,7 +19,7 @@ struct QrDecodeResult {
     // zbar 实际给了多少个点
     int num_corners = 0;
 
-    // 是否有可用多边形
+    // 是否有可用四边形
     bool valid_polygon = false;
 };
 
