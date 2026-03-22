@@ -1,91 +1,96 @@
 #include "../include/qr_decoder.hpp"
 
-#include <cstring>
 #include <algorithm>
+#include <cstring>
 
 QrDecoder::QrDecoder()
-    : scanner_(zbar::zbar_image_scanner_create())
-{
-    // 只开QR，减少CPU负担
-    zbar::zbar_image_scanner_set_config(scanner_, zbar::ZBAR_NONE,
-                                        zbar::ZBAR_CFG_ENABLE, 0);
-    zbar::zbar_image_scanner_set_config(scanner_, zbar::ZBAR_QRCODE,
-                                        zbar::ZBAR_CFG_ENABLE, 1);
-
-    // 可选调优（按需打开）：
-    // zbar::zbar_image_scanner_set_config(scanner_, zbar::ZBAR_QRCODE, zbar::ZBAR_CFG_X_DENSITY, 1);
-    // zbar::zbar_image_scanner_set_config(scanner_, zbar::ZBAR_QRCODE, zbar::ZBAR_CFG_Y_DENSITY, 1);
+    : scanner_(zbar::zbar_image_scanner_create()) {
+    if (scanner_) {
+        zbar::zbar_image_scanner_set_config(
+            scanner_, zbar::ZBAR_NONE, zbar::ZBAR_CFG_ENABLE, 0);
+        zbar::zbar_image_scanner_set_config(
+            scanner_, zbar::ZBAR_QRCODE, zbar::ZBAR_CFG_ENABLE, 1);
+    }
 }
 
-QrDecoder::~QrDecoder()
-{
-    if (scanner_)
+QrDecoder::~QrDecoder() {
+    if (scanner_) {
         zbar::zbar_image_scanner_destroy(scanner_);
+        scanner_ = nullptr;
+    }
 }
 
-bool QrDecoder::DecodeY800(const uint8_t *gray, int width, int height, int stride,
-                           std::vector<QrDecodeResult> *results)
-{
-    if (results)
+bool QrDecoder::DecodeY800(const uint8_t* gray,
+                           int width,
+                           int height,
+                           int stride,
+                           std::vector<QrDecodeResult>* results) {
+    if (results) {
         results->clear();
+    }
 
-    if (!scanner_ || !gray || !results || width <= 0 || height <= 0 || stride < width)
+    if (!scanner_ || !gray || !results || width <= 0 || height <= 0 || stride < width) {
         return false;
+    }
 
     const size_t need = static_cast<size_t>(width) * static_cast<size_t>(height);
-    if (scratch_.size() < need)
+    if (scratch_.size() < need) {
         scratch_.resize(need);
+    }
 
-    // stride==width 可直接整块拷贝，否则逐行拷贝
     if (stride == width) {
-        memcpy(scratch_.data(), gray, need);
+        std::memcpy(scratch_.data(), gray, need);
     } else {
         for (int y = 0; y < height; ++y) {
-            memcpy(scratch_.data() + static_cast<size_t>(y) * width,
-                   gray + static_cast<size_t>(y) * stride,
-                   static_cast<size_t>(width));
+            std::memcpy(
+                scratch_.data() + static_cast<size_t>(y) * static_cast<size_t>(width),
+                gray + static_cast<size_t>(y) * static_cast<size_t>(stride),
+                static_cast<size_t>(width)
+            );
         }
     }
 
-    zbar::zbar_image_t *image = zbar::zbar_image_create();
-    if (!image)
+    zbar::zbar_image_t* image = zbar::zbar_image_create();
+    if (!image) {
         return false;
+    }
 
     zbar::zbar_image_set_format(image, zbar_fourcc('Y', '8', '0', '0'));
-    zbar::zbar_image_set_size(image, width, height);
-
-    // 注意: 这里用NULL cleanup，意味着数据生命周期由本类scratch_管理
-    zbar::zbar_image_set_data(image, scratch_.data(), need, NULL);
+    zbar::zbar_image_set_size(
+        image,
+        static_cast<unsigned int>(width),
+        static_cast<unsigned int>(height)
+    );
+    zbar::zbar_image_set_data(image, scratch_.data(), need, nullptr);
 
     const int n = zbar::zbar_scan_image(scanner_, image);
 
     if (n > 0) {
-        const zbar::zbar_symbol_t *symbol = zbar::zbar_image_first_symbol(image);
+        const zbar::zbar_symbol_t* symbol = zbar::zbar_image_first_symbol(image);
         for (; symbol; symbol = zbar::zbar_symbol_next(symbol)) {
             QrDecodeResult out;
-            out.type = zbar::zbar_get_symbol_name(zbar::zbar_symbol_get_type(symbol));
 
-            const char *data = zbar::zbar_symbol_get_data(symbol);
+            const zbar::zbar_symbol_type_t sym_type =
+                zbar::zbar_symbol_get_type(symbol);
+            out.type = zbar::zbar_get_symbol_name(sym_type);
+
+            const char* data = zbar::zbar_symbol_get_data(symbol);
             out.data = data ? data : "";
 
-            const int loc_count = zbar::zbar_symbol_get_loc_size(symbol);
-            if (loc_count > 0) {
-                int min_x = zbar::zbar_symbol_get_loc_x(symbol, 0);
-                int min_y = zbar::zbar_symbol_get_loc_y(symbol, 0);
-                int max_x = min_x;
-                int max_y = min_y;
-                for (int i = 1; i < loc_count; ++i) {
-                    const int x = zbar::zbar_symbol_get_loc_x(symbol, i);
-                    const int y = zbar::zbar_symbol_get_loc_y(symbol, i);
-                    min_x = std::min(min_x, x);
-                    min_y = std::min(min_y, y);
-                    max_x = std::max(max_x, x);
-                    max_y = std::max(max_y, y);
+            const unsigned int nloc = zbar::zbar_symbol_get_loc_size(symbol);
+            out.num_corners = static_cast<int>(std::min<unsigned int>(nloc, 4));
+
+            if (nloc >= 4) {
+                for (int i = 0; i < 4; ++i) {
+                    float x = static_cast<float>(zbar::zbar_symbol_get_loc_x(symbol, i));
+                    float y = static_cast<float>(zbar::zbar_symbol_get_loc_y(symbol, i));
+
+                    x = std::max(0.0f, std::min(x, static_cast<float>(width - 1)));
+                    y = std::max(0.0f, std::min(y, static_cast<float>(height - 1)));
+
+                    out.corners[i] = {x, y};
                 }
-                out.x1 = min_x;
-                out.y1 = min_y;
-                out.x2 = max_x;
-                out.y2 = max_y;
+                out.valid_polygon = true;
             }
 
             results->push_back(out);
