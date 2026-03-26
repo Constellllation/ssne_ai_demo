@@ -29,6 +29,12 @@ typedef struct {
     int color;
 } OsdQuadRangle;
 
+typedef struct {
+    std::string path;
+    int x;
+    int y;
+} OsdTextureItem;
+
 class OsdDevice {
 public:
     OsdDevice();
@@ -53,6 +59,9 @@ public:
                    fdevice::ALPHATYPE alpha,
                    int color);
 
+    // 新增：在 texture 层上按位置贴多张字符位图
+    void DrawTextures(const std::vector<OsdTextureItem>& items, int layer_id);
+
 private:
     int LoadLutFile(const char* filename);
     void DrawTexture(const char* filename, int layer_id);
@@ -61,7 +70,8 @@ private:
 
 private:
     handle_t m_osd_handle;
-    std::string m_osd_lut_path = "/app_demo/app_assets/qr_ok_test_colorLUT.sscl";
+    // 这里默认用“字符贴图工具统一转换后”的共用 LUT
+    std::string m_osd_lut_path = "/app_demo/app_assets/chars_colorLUT.sscl";
     std::string m_texture_path = "/app_demo/app_assets/qr_ok_test.ssbmp";
     uint8_t *m_pcolor_lut = nullptr;
     int m_file_size = 0;

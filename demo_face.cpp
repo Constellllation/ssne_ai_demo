@@ -1,5 +1,8 @@
 /*
  * @Filename: demo_face.cpp (QR + OSD polygon version, low-latency + smoothing + ROI decode)
+ * 增强点：
+ * 1. 继续保留二维码框显示
+ * 2. 新增：把二维码简要信息通过字符位图拼接显示到屏幕上
  */
 
 #include <array>
@@ -15,6 +18,7 @@
 #include <vector>
 #include <unistd.h>
 #include <cmath>
+#include <cctype>
 
 #include "include/common.hpp"
 #include "include/utils.hpp"
@@ -69,7 +73,6 @@ struct ImagePair {
 };
 
 std::queue<ImagePair> image_queue;
-// 只保留最新帧，尽量减少滞后
 const int MAX_QUEUE_SIZE = 1;
 
 // 全局退出标志（线程安全）
@@ -249,7 +252,6 @@ static void PushQrQuads(const std::vector<QrDecodeResult>& qr_results,
             float x = r.corners[i][0];
             float y = r.corners[i][1];
 
-            // 绕中心缩放，再平移
             x = cx + params.kx * (x - cx) + params.dx;
             y = cy + params.ky * (y - cy) + params.dy;
 
@@ -292,6 +294,75 @@ static bool IsQuadAlmostSame(const QrQuad& a, const SmoothedQuad& b, float thres
     return true;
 }
 
+// ===================== 文本叠加（字符贴图组合） =====================
+static const std::string kCharBaseDir = "/app_demo/app_assets/chars/";
+
+static std::string CharToTexturePath(char c) {
+    switch (c) {
+        case ':': return kCharBaseDir + "char_colon.ssbmp";
+        case '/': return kCharBaseDir + "char_slash.ssbmp";
+        case '.': return kCharBaseDir + "char_dot.ssbmp";
+        case '-': return kCharBaseDir + "char_dash.ssbmp";
+        case '_': return kCharBaseDir + "char_underscore.ssbmp";
+        case ' ': return kCharBaseDir + "char_space.ssbmp";
+        default:
+            if (c >= 'A' && c <= 'Z') return kCharBaseDir + "char_" + std::string(1, c) + ".ssbmp";
+            if (c >= '0' && c <= '9') return kCharBaseDir + "char_" + std::string(1, c) + ".ssbmp";
+            return kCharBaseDir + "char_space.ssbmp";
+    }
+}
+
+static std::string MakeBriefText(const std::string& raw) {
+    // 只保留一小段简要信息，减少占屏和性能开销
+    std::string out;
+    out.reserve(14);
+
+    for (char ch : raw) {
+        unsigned char uch = static_cast<unsigned char>(ch);
+        char up = static_cast<char>(std::toupper(uch));
+
+        bool ok = (up >= 'A' && up <= 'Z') ||
+                  (up >= '0' && up <= '9') ||
+                  up == ':' || up == '/' || up == '.' || up == '-' || up == '_' || up == ' ';
+
+        out.push_back(ok ? up : ' ');
+        if (out.size() >= 14) break;
+    }
+
+    return out;
+}
+
+static std::vector<sst::device::osd::OsdTextureItem> BuildTextItems(const std::string& brief) {
+    std::vector<sst::device::osd::OsdTextureItem> items;
+
+    // 第一行固定 "QR:"
+    const std::string line1 = "QR:";
+    const std::string line2 = brief;
+
+    const int start_x = 0;   // 偶数起点
+    const int start_y = 0;   // 偶数起点
+    const int char_w  = 32;  // 当前先按较紧密排布；若你观察到仍然拉伸，再调这个值
+    const int line_h  = 48;  // 第二行纵向间距
+
+    for (size_t i = 0; i < line1.size(); ++i) {
+        sst::device::osd::OsdTextureItem item;
+        item.path = CharToTexturePath(line1[i]);
+        item.x = start_x + static_cast<int>(i) * char_w;
+        item.y = start_y;
+        items.push_back(item);
+    }
+
+    for (size_t i = 0; i < line2.size(); ++i) {
+        sst::device::osd::OsdTextureItem item;
+        item.path = CharToTexturePath(line2[i]);
+        item.x = start_x + static_cast<int>(i) * char_w;
+        item.y = start_y + line_h;
+        items.push_back(item);
+    }
+
+    return items;
+}
+
 void inference_thread_func(int img_height) {
     (void)img_height; // 当前版本先只解码右路
     cout << "[Thread] QR inference thread started!" << endl;
@@ -301,6 +372,7 @@ void inference_thread_func(int img_height) {
     std::vector<QrQuad> local_quads;
 
     std::string last_right_payload;
+    std::string last_brief_text;
 
     while (!stop_inference) {
         ImagePair img_pair;
@@ -332,13 +404,11 @@ void inference_thread_func(int img_height) {
         // ===================== 只解码右路 / 上半屏 =====================
         GrayView gv1;
         if (TensorToGrayView(img_pair.img1, &gv1)) {
-            // ROI：中间 75%
             const int roi_x = gv1.width / 8;
             const int roi_y = gv1.height / 8;
             const int roi_w = gv1.width * 3 / 4;
             const int roi_h = gv1.height * 3 / 4;
 
-            // 降分辨率到 320x240
             const int dec_w = 320;
             const int dec_h = 240;
 
@@ -360,7 +430,6 @@ void inference_thread_func(int img_height) {
                 );
 
                 if (ok && !qr_results.empty()) {
-                    // 把低分辨率 ROI 坐标映射回原图坐标
                     RemapQrResultsFromRoi(&qr_results, roi_x, roi_y, roi_w, roi_h, dec_w, dec_h);
 
                     std::string current_payload = qr_results[0].data;
@@ -374,6 +443,14 @@ void inference_thread_func(int img_height) {
                         last_right_payload = current_payload;
                     }
 
+                    // 新增：如果简要文本变化，更新字符贴图
+                    std::string brief = MakeBriefText(current_payload);
+                    if (brief != last_brief_text && g_visualizer != nullptr) {
+                        auto items = BuildTextItems(brief);
+                        g_visualizer->DrawTextItems(items);
+                        last_brief_text = brief;
+                    }
+
                     PushQrQuads(qr_results, 0, &local_quads);
                 }
             }
@@ -381,10 +458,8 @@ void inference_thread_func(int img_height) {
 
         if (g_visualizer != nullptr) {
             if (!local_quads.empty()) {
-                // 只画第一个二维码，先保证稳定
                 QrQuad current = local_quads[0];
 
-                // 轻量去抖：变化极小时沿用上一帧
                 if (!IsQuadAlmostSame(current, g_right_smooth_quad, 2.0f)) {
                     SmoothQuad(current, &g_right_smooth_quad, 0.75f);
                 }
@@ -470,7 +545,6 @@ int main() {
         {
             std::unique_lock<std::mutex> lock(mtx_image);
 
-            // 队列满时丢旧帧，保留最新帧
             if (image_queue.size() >= MAX_QUEUE_SIZE) {
                 image_queue.pop();
             }

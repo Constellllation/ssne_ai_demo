@@ -5,6 +5,7 @@
 
 #include <array>
 #include <vector>
+#include <string>
 
 namespace utils {
 void Merge(FaceDetectionResult* result, size_t low, size_t mid, size_t high);
@@ -24,6 +25,9 @@ public:
     void Draw();
     void Draw(const std::vector<std::array<float, 4>>& boxes);
     void DrawQuads(const std::vector<QrQuad>& quads);
+
+    // 新增：字符贴图组合显示
+    void DrawTextItems(const std::vector<sst::device::osd::OsdTextureItem>& items);
 
 private:
     sst::device::osd::OsdDevice osd_device;
