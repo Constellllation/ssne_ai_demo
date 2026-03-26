@@ -1,8 +1,16 @@
-#include <cmath>
-#include <cstring>
-#include <fstream>
+/*
+ * @Author: Jingwen Bai
+ * @Date: 2024-07-04 11:07:00
+ * @Description: osd device
+ * @Filename: osd-device.cpp
+ */
+
 #include <iostream>
+#include <fstream>
+#include <cstring>
 #include <unistd.h>
+#include <cmath>
+#include <cstdio>
 
 #include "../include/osd-device.hpp"
 
@@ -13,7 +21,8 @@ namespace device {
 namespace osd {
 
 OsdDevice::OsdDevice()
-    : m_osd_handle(0) {
+    : m_height(0),
+      m_width(0) {
 }
 
 OsdDevice::~OsdDevice() {
@@ -25,18 +34,22 @@ void OsdDevice::Initialize(int width, int height) {
     m_height = height;
 
     LoadLutFile(m_osd_lut_path.c_str());
+
     m_osd_handle = osd_open_device();
     osd_init_device(m_osd_handle, OSD_LAYER_SIZE, (char*)m_pcolor_lut);
 
-    int dma_size = 0x20000;
-    for (int layer_index = 0; layer_index < OSD_LAYER_SIZE; layer_index++) {
-        osd_alloc_buffer(m_osd_handle, m_layer_dma[layer_index].dma, dma_size);
+    // 前面 0 ~ OSD_LAYER_SIZE-2 层：画四边形框
+    int quad_dma_size = 0x20000;
+    for (int layer_index = 0; layer_index < OSD_LAYER_SIZE - 1; layer_index++) {
+        osd_alloc_buffer(m_osd_handle, m_layer_dma[layer_index].dma, quad_dma_size);
         usleep(250000);
-        osd_alloc_buffer(m_osd_handle, m_layer_dma[layer_index].dma_2, dma_size);
+        osd_alloc_buffer(m_osd_handle, m_layer_dma[layer_index].dma_2, quad_dma_size);
+
         int dma_fd = osd_get_buffer_fd(m_osd_handle, m_layer_dma[layer_index].dma);
 
         LAYER_ATTR_S osd_layer;
         std::memset(&osd_layer, 0, sizeof(osd_layer));
+
         osd_layer.codeTYPE = SS_TYPE_QUADRANGLE;
         osd_layer.layer_data_QR.osd_buf.buf_type = BUFFER_TYPE_DMABUF;
         osd_layer.layer_data_QR.osd_buf.buf.fd_dmabuf = dma_fd;
@@ -49,6 +62,36 @@ void OsdDevice::Initialize(int width, int height) {
         osd_create_layer(m_osd_handle, (ssLAYER_HANDLE)layer_index, &osd_layer);
         osd_set_layer_buffer(m_osd_handle, (ssLAYER_HANDLE)layer_index, m_layer_dma[layer_index]);
     }
+
+    // 最后一层：专门给 texture / bitmap
+    {
+        int layer_index = OSD_LAYER_SIZE - 1;
+
+        osd_alloc_buffer(m_osd_handle, m_layer_dma[layer_index].dma, 0x20000);
+        usleep(250000);
+
+        int dma_fd = osd_get_buffer_fd(m_osd_handle, m_layer_dma[layer_index].dma);
+
+        LAYER_ATTR_S osd_layer;
+        std::memset(&osd_layer, 0, sizeof(osd_layer));
+
+        osd_layer.codeTYPE = SS_TYPE_RLE;
+        osd_layer.layer_data_RLE.osd_buf.buf_type = BUFFER_TYPE_DMABUF;
+        osd_layer.layer_data_RLE.osd_buf.buf.fd_dmabuf = dma_fd;
+        osd_layer.layerStart.layer_start_x = 0;
+        osd_layer.layerStart.layer_start_y = 0;
+        osd_layer.layerSize.layer_width = m_width;
+        osd_layer.layerSize.layer_height = m_height;
+        osd_layer.layer_rgn = {TYPE_IMAGE, {m_width, m_height}};
+
+        osd_create_layer(m_osd_handle, (ssLAYER_HANDLE)layer_index, &osd_layer);
+        osd_set_layer_buffer(m_osd_handle, (ssLAYER_HANDLE)layer_index, m_layer_dma[layer_index]);
+    }
+
+    // 位图显示测试
+    printf("[OSD-TEX] about to draw texture: %s\n", m_texture_path.c_str());
+    DrawTexture(m_texture_path.c_str(), OSD_LAYER_SIZE - 1);
+    printf("[OSD-TEX] DrawTexture finished\n");
 }
 
 void OsdDevice::Release() {
@@ -56,12 +99,11 @@ void OsdDevice::Release() {
 
     for (int i = 0; i < OSD_LAYER_SIZE; i++) {
         osd_destroy_layer(m_osd_handle, (ssLAYER_HANDLE)i);
-        if (m_layer_dma[i].dma != nullptr) {
+
+        if (m_layer_dma[i].dma != nullptr)
             osd_delete_buffer(m_osd_handle, m_layer_dma[i].dma);
-        }
-        if (m_layer_dma[i].dma_2 != nullptr) {
+        if (m_layer_dma[i].dma_2 != nullptr)
             osd_delete_buffer(m_osd_handle, m_layer_dma[i].dma_2);
-        }
     }
 
     if (m_pcolor_lut != nullptr) {
@@ -95,13 +137,28 @@ int OsdDevice::LoadLutFile(const char* filename) {
     return 0;
 }
 
-void OsdDevice::Draw(std::vector<OsdQuadRangle>& quad_rangle) {
-    if (quad_rangle.empty()) {
+void OsdDevice::DrawTexture(const char* filename, int layer_id) {
+    printf("[OSD-TEX] DrawTexture enter, file=%s, layer=%d\n", filename, layer_id);
+
+    BITMAP_INFO_S bm_info = {filename, TYPE_ALPHA100, {0, 0}};
+
+    int ret = osd_add_texture(m_osd_handle, &bm_info);
+    printf("[OSD-TEX] osd_add_texture ret=%d\n", ret);
+
+    ret = osd_flush_texture(m_osd_handle);
+    printf("[OSD-TEX] osd_flush_texture ret=%d\n", ret);
+
+    ret = osd_lock_layer(m_osd_handle, (ssLAYER_HANDLE)layer_id, true);
+    printf("[OSD-TEX] osd_lock_layer ret=%d\n", ret);
+}
+
+void OsdDevice::Draw(std::vector<OsdQuadRangle> &quad_rangle) {
+    if (quad_rangle.size() == 0) {
         osd_clean_all_layer(m_osd_handle);
         return;
     }
 
-    for (auto& q : quad_rangle) {
+    for (auto &q : quad_rangle) {
         GenQrangleBox(q.box, q.border);
         COVER_ATTR_S qrangle_attr = {q.color, q.type, q.alpha, m_qrangle_out, m_qrangle_in};
         osd_add_quad_rangle(m_osd_handle, &qrangle_attr);
@@ -110,13 +167,13 @@ void OsdDevice::Draw(std::vector<OsdQuadRangle>& quad_rangle) {
     osd_flush_quad_rangle(m_osd_handle);
 }
 
-void OsdDevice::Draw(std::vector<OsdQuadRangle>& quad_rangle, int layer_id) {
-    if (quad_rangle.empty()) {
+void OsdDevice::Draw(std::vector<OsdQuadRangle> &quad_rangle, int layer_id) {
+    if (quad_rangle.size() == 0) {
         osd_clean_layer(m_osd_handle, (ssLAYER_HANDLE)layer_id);
         return;
     }
 
-    for (auto& q : quad_rangle) {
+    for (auto &q : quad_rangle) {
         GenQrangleBox(q.box, q.border);
         COVER_ATTR_S qrangle_attr = {q.color, q.type, q.alpha, m_qrangle_out, m_qrangle_in};
         osd_add_quad_rangle_layer(m_osd_handle, (ssLAYER_HANDLE)layer_id, &qrangle_attr);
@@ -131,12 +188,12 @@ void OsdDevice::Draw(std::vector<std::array<float, 4>>& boxes,
                      tagQUADRANGLETYPE type,
                      tagALPHATYPE alpha,
                      int color) {
-    if (boxes.empty()) {
+    if (boxes.size() == 0) {
         osd_clean_layer(m_osd_handle, (ssLAYER_HANDLE)layer_id);
         return;
     }
 
-    for (auto& box : boxes) {
+    for (auto &box : boxes) {
         GenQrangleBox(box, border);
         COVER_ATTR_S qrangle_attr = {color, type, alpha, m_qrangle_out, m_qrangle_in};
         osd_add_quad_rangle_layer(m_osd_handle, (ssLAYER_HANDLE)layer_id, &qrangle_attr);
@@ -163,13 +220,13 @@ void OsdDevice::GenQrangleBox(std::array<float, 4>& det, int border) {
     box[11] = std::min(m_height, std::max(0, int(det[3] + border)));
     box[12] = std::min(m_width,  std::max(0, int(det[2] + border)));
     box[13] = std::min(m_height, std::max(0, int(det[3] + border)));
-    box[14] = std::min(m_width,  std::max(0, int(det[2] - border + 2 * border)));
+    box[14] = std::min(m_width,  std::max(0, int(det[2] + border)));
     box[15] = std::min(m_height, std::max(0, int(det[1] - border)));
 
-    m_qrangle_in.points[0] = {box[0], box[1]};
-    m_qrangle_in.points[1] = {box[2], box[3]};
-    m_qrangle_in.points[2] = {box[4], box[5]};
-    m_qrangle_in.points[3] = {box[6], box[7]};
+    m_qrangle_in.points[0] = {box[0],  box[1]};
+    m_qrangle_in.points[1] = {box[2],  box[3]};
+    m_qrangle_in.points[2] = {box[4],  box[5]};
+    m_qrangle_in.points[3] = {box[6],  box[7]};
 
     m_qrangle_out.points[0] = {box[8],  box[9]};
     m_qrangle_out.points[1] = {box[10], box[11]};
@@ -178,8 +235,7 @@ void OsdDevice::GenQrangleBox(std::array<float, 4>& det, int border) {
 }
 
 void OsdDevice::GenQranglePolygon(const std::array<std::array<float, 2>, 4>& pts, int border) {
-    float cx = 0.0f;
-    float cy = 0.0f;
+    float cx = 0.0f, cy = 0.0f;
     for (int i = 0; i < 4; ++i) {
         cx += pts[i][0];
         cy += pts[i][1];
@@ -194,18 +250,16 @@ void OsdDevice::GenQranglePolygon(const std::array<std::array<float, 2>, 4>& pts
         float vx = x - cx;
         float vy = y - cy;
         float norm = std::sqrt(vx * vx + vy * vy);
-        if (norm < 1e-3f) {
-            norm = 1.0f;
-        }
+        if (norm < 1e-3f) norm = 1.0f;
 
         float ox = x + border * vx / norm;
         float oy = y + border * vy / norm;
         float ix = x - border * vx / norm;
         float iy = y - border * vy / norm;
 
-        ox = std::min((float)m_width, std::max(0.0f, ox));
+        ox = std::min((float)m_width,  std::max(0.0f, ox));
         oy = std::min((float)m_height, std::max(0.0f, oy));
-        ix = std::min((float)m_width, std::max(0.0f, ix));
+        ix = std::min((float)m_width,  std::max(0.0f, ix));
         iy = std::min((float)m_height, std::max(0.0f, iy));
 
         m_qrangle_out.points[i] = {(int)ox, (int)oy};
