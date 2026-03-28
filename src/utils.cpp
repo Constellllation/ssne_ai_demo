@@ -56,11 +56,6 @@ void VISUALIZER::DrawQuads(const std::vector<QrQuad>& quads) {
         1);
 }
 
-void VISUALIZER::DrawTextItems(const std::vector<sst::device::osd::OsdTextureItem>& items) {
-    // 约定最后一层用于文字/字符位图
-    osd_device.DrawTextures(items, OSD_LAYER_SIZE - 1);
-}
-
 void VISUALIZER::Release() {
     osd_device.Release();
 }

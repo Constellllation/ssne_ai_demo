@@ -1,8 +1,6 @@
 /*
- * @Filename: demo_face.cpp (QR + OSD polygon version, low-latency + smoothing + ROI decode)
- * 增强点：
- * 1. 继续保留二维码框显示
- * 2. 新增：把二维码简要信息通过字符位图拼接显示到屏幕上
+ * Revert package: demo_face.cpp
+ * 回退到不显示文字，仅保留二维码框和 QR_OK 位图测试
  */
 
 #include <array>
@@ -18,7 +16,6 @@
 #include <vector>
 #include <unistd.h>
 #include <cmath>
-#include <cctype>
 
 #include "include/common.hpp"
 #include "include/utils.hpp"
@@ -26,14 +23,12 @@
 
 using namespace std;
 
-// ===================== 全局同步对象 =====================
 std::mutex mtx_image;
 std::condition_variable cv_image_ready;
 std::atomic<bool> stop_inference(false);
 
 std::mutex g_param_mtx;
 
-// 坐标修正参数
 struct BoxTransformParams {
     float kx = 0.50f;
     float ky = 1.00f;
@@ -54,28 +49,23 @@ static void PrintBoxParams() {
            g_box_params.kx, g_box_params.ky, g_box_params.dx, g_box_params.dy);
 }
 
-// ===================== 平滑状态 =====================
 struct SmoothedQuad {
     bool valid = false;
     std::array<std::array<float, 2>, 4> corners{};
 };
 
 SmoothedQuad g_right_smooth_quad;
-
-// 全局可视化器指针：推理线程直接画框
 VISUALIZER* g_visualizer = nullptr;
 
-// 图像队列结构
 struct ImagePair {
-    ssne_tensor_t img1;   // 上半屏 / right
-    ssne_tensor_t img2;   // 下半屏 / left
+    ssne_tensor_t img1;
+    ssne_tensor_t img2;
     int frame_id;
 };
 
 std::queue<ImagePair> image_queue;
 const int MAX_QUEUE_SIZE = 1;
 
-// 全局退出标志（线程安全）
 bool g_exit_flag = false;
 std::mutex g_mtx;
 
@@ -103,32 +93,16 @@ void keyboard_listener() {
         {
             std::lock_guard<std::mutex> lock(g_param_mtx);
 
-            if (input == "a") {
-                g_box_params.dx -= 1.0f;
-                changed = true;
-            } else if (input == "d") {
-                g_box_params.dx += 1.0f;
-                changed = true;
-            } else if (input == "j") {
-                g_box_params.kx -= 0.01f;
-                changed = true;
-            } else if (input == "l") {
-                g_box_params.kx += 0.01f;
-                changed = true;
-            } else if (input == "w") {
-                g_box_params.dy -= 1.0f;
-                changed = true;
-            } else if (input == "s") {
-                g_box_params.dy += 1.0f;
-                changed = true;
-            } else if (input == "i") {
-                g_box_params.ky -= 0.01f;
-                changed = true;
-            } else if (input == "k") {
-                g_box_params.ky += 0.01f;
-                changed = true;
-            } else if (input == "p") {
-            } else {
+            if (input == "a") { g_box_params.dx -= 1.0f; changed = true; }
+            else if (input == "d") { g_box_params.dx += 1.0f; changed = true; }
+            else if (input == "j") { g_box_params.kx -= 0.01f; changed = true; }
+            else if (input == "l") { g_box_params.kx += 0.01f; changed = true; }
+            else if (input == "w") { g_box_params.dy -= 1.0f; changed = true; }
+            else if (input == "s") { g_box_params.dy += 1.0f; changed = true; }
+            else if (input == "i") { g_box_params.ky -= 0.01f; changed = true; }
+            else if (input == "k") { g_box_params.ky += 0.01f; changed = true; }
+            else if (input == "p") {}
+            else {
                 std::cout << "无效输入。可用: a d j l w s i k p q" << std::endl;
             }
         }
@@ -144,7 +118,6 @@ bool check_exit_flag() {
     return g_exit_flag;
 }
 
-// ===================== Tensor -> GrayView =====================
 struct GrayView {
     const uint8_t* data = nullptr;
     int width = 0;
@@ -153,13 +126,8 @@ struct GrayView {
 };
 
 static bool TensorToGrayView(const ssne_tensor_t &t, GrayView *out) {
-    if (!out) {
-        return false;
-    }
-
-    if (get_data_format(t) != SSNE_Y_8) {
-        return false;
-    }
+    if (!out) return false;
+    if (get_data_format(t) != SSNE_Y_8) return false;
 
     out->data = reinterpret_cast<const uint8_t *>(get_data(t));
     out->width = static_cast<int>(get_width(t));
@@ -176,7 +144,6 @@ struct GrayBuffer {
     int stride = 0;
 };
 
-// 从原图裁 ROI，再做最近邻降采样
 static bool CropAndDownsampleGray(const GrayView& src,
                                   int roi_x,
                                   int roi_y,
@@ -225,7 +192,6 @@ static void RemapQrResultsFromRoi(std::vector<QrDecodeResult>* results,
 
     for (auto& r : *results) {
         if (!r.valid_polygon) continue;
-
         for (int i = 0; i < 4; ++i) {
             r.corners[i][0] = roi_x + r.corners[i][0] * sx;
             r.corners[i][1] = roi_y + r.corners[i][1] * sy;
@@ -233,7 +199,6 @@ static void RemapQrResultsFromRoi(std::vector<QrDecodeResult>* results,
     }
 }
 
-// ===================== 四点坐标修正 =====================
 static void PushQrQuads(const std::vector<QrDecodeResult>& qr_results,
                         int y_offset,
                         std::vector<QrQuad>* out_quads) {
@@ -262,7 +227,6 @@ static void PushQrQuads(const std::vector<QrDecodeResult>& qr_results,
     }
 }
 
-// ===================== 轻量平滑 =====================
 static void SmoothQuad(const QrQuad& input, SmoothedQuad* state, float alpha) {
     if (!state) return;
 
@@ -287,92 +251,19 @@ static bool IsQuadAlmostSame(const QrQuad& a, const SmoothedQuad& b, float thres
     for (int i = 0; i < 4; ++i) {
         float dx = a.corners[i][0] - b.corners[i][0];
         float dy = a.corners[i][1] - b.corners[i][1];
-        if ((dx * dx + dy * dy) > th2) {
-            return false;
-        }
+        if ((dx * dx + dy * dy) > th2) return false;
     }
     return true;
 }
 
-// ===================== 文本叠加（字符贴图组合） =====================
-static const std::string kCharBaseDir = "/app_demo/app_assets/chars/";
-
-static std::string CharToTexturePath(char c) {
-    switch (c) {
-        case ':': return kCharBaseDir + "char_colon.ssbmp";
-        case '/': return kCharBaseDir + "char_slash.ssbmp";
-        case '.': return kCharBaseDir + "char_dot.ssbmp";
-        case '-': return kCharBaseDir + "char_dash.ssbmp";
-        case '_': return kCharBaseDir + "char_underscore.ssbmp";
-        case ' ': return kCharBaseDir + "char_space.ssbmp";
-        default:
-            if (c >= 'A' && c <= 'Z') return kCharBaseDir + "char_" + std::string(1, c) + ".ssbmp";
-            if (c >= '0' && c <= '9') return kCharBaseDir + "char_" + std::string(1, c) + ".ssbmp";
-            return kCharBaseDir + "char_space.ssbmp";
-    }
-}
-
-static std::string MakeBriefText(const std::string& raw) {
-    // 只保留一小段简要信息，减少占屏和性能开销
-    std::string out;
-    out.reserve(14);
-
-    for (char ch : raw) {
-        unsigned char uch = static_cast<unsigned char>(ch);
-        char up = static_cast<char>(std::toupper(uch));
-
-        bool ok = (up >= 'A' && up <= 'Z') ||
-                  (up >= '0' && up <= '9') ||
-                  up == ':' || up == '/' || up == '.' || up == '-' || up == '_' || up == ' ';
-
-        out.push_back(ok ? up : ' ');
-        if (out.size() >= 14) break;
-    }
-
-    return out;
-}
-
-static std::vector<sst::device::osd::OsdTextureItem> BuildTextItems(const std::string& brief) {
-    std::vector<sst::device::osd::OsdTextureItem> items;
-
-    // 第一行固定 "QR:"
-    const std::string line1 = "QR:";
-    const std::string line2 = brief;
-
-    const int start_x = 0;   // 偶数起点
-    const int start_y = 0;   // 偶数起点
-    const int char_w  = 32;  // 当前先按较紧密排布；若你观察到仍然拉伸，再调这个值
-    const int line_h  = 48;  // 第二行纵向间距
-
-    for (size_t i = 0; i < line1.size(); ++i) {
-        sst::device::osd::OsdTextureItem item;
-        item.path = CharToTexturePath(line1[i]);
-        item.x = start_x + static_cast<int>(i) * char_w;
-        item.y = start_y;
-        items.push_back(item);
-    }
-
-    for (size_t i = 0; i < line2.size(); ++i) {
-        sst::device::osd::OsdTextureItem item;
-        item.path = CharToTexturePath(line2[i]);
-        item.x = start_x + static_cast<int>(i) * char_w;
-        item.y = start_y + line_h;
-        items.push_back(item);
-    }
-
-    return items;
-}
-
 void inference_thread_func(int img_height) {
-    (void)img_height; // 当前版本先只解码右路
+    (void)img_height;
     cout << "[Thread] QR inference thread started!" << endl;
 
     QrDecoder decoder;
     std::vector<QrDecodeResult> qr_results;
     std::vector<QrQuad> local_quads;
-
     std::string last_right_payload;
-    std::string last_brief_text;
 
     while (!stop_inference) {
         ImagePair img_pair;
@@ -384,9 +275,7 @@ void inference_thread_func(int img_height) {
                 return !image_queue.empty() || stop_inference.load();
             });
 
-            if (stop_inference && image_queue.empty()) {
-                break;
-            }
+            if (stop_inference && image_queue.empty()) break;
 
             if (!image_queue.empty()) {
                 img_pair = image_queue.front();
@@ -395,13 +284,10 @@ void inference_thread_func(int img_height) {
             }
         }
 
-        if (!has_image) {
-            continue;
-        }
+        if (!has_image) continue;
 
         local_quads.clear();
 
-        // ===================== 只解码右路 / 上半屏 =====================
         GrayView gv1;
         if (TensorToGrayView(img_pair.img1, &gv1)) {
             const int roi_x = gv1.width / 8;
@@ -414,11 +300,7 @@ void inference_thread_func(int img_height) {
 
             GrayBuffer dec_buf;
             bool prep_ok = CropAndDownsampleGray(
-                gv1,
-                roi_x, roi_y, roi_w, roi_h,
-                dec_w, dec_h,
-                &dec_buf
-            );
+                gv1, roi_x, roi_y, roi_w, roi_h, dec_w, dec_h, &dec_buf);
 
             if (prep_ok) {
                 bool ok = decoder.DecodeY800(
@@ -441,14 +323,6 @@ void inference_thread_func(int img_height) {
                                    qr_results[i].data.c_str());
                         }
                         last_right_payload = current_payload;
-                    }
-
-                    // 新增：如果简要文本变化，更新字符贴图
-                    std::string brief = MakeBriefText(current_payload);
-                    if (brief != last_brief_text && g_visualizer != nullptr) {
-                        auto items = BuildTextItems(brief);
-                        g_visualizer->DrawTextItems(items);
-                        last_brief_text = brief;
                     }
 
                     PushQrQuads(qr_results, 0, &local_quads);

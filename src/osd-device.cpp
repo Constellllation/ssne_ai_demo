@@ -10,7 +10,6 @@
 #include <cstring>
 #include <unistd.h>
 #include <cmath>
-#include <cstdio>
 
 #include "../include/osd-device.hpp"
 
@@ -38,10 +37,9 @@ void OsdDevice::Initialize(int width, int height) {
     m_osd_handle = osd_open_device();
     osd_init_device(m_osd_handle, OSD_LAYER_SIZE, (char*)m_pcolor_lut);
 
-    // 这里沿用你当前“能正常显示”的分层方式：
-    // 前面层继续画四边形框，最后一层保留给 texture。
+    // 前面 0 ~ OSD_LAYER_SIZE-2 层：画四边形框
     int quad_dma_size = 0x20000;
-    for (int layer_index = 0; layer_index < OSD_LAYER_SIZE; layer_index++) {
+    for (int layer_index = 0; layer_index < OSD_LAYER_SIZE - 1; layer_index++) {
         osd_alloc_buffer(m_osd_handle, m_layer_dma[layer_index].dma, quad_dma_size);
         usleep(250000);
         osd_alloc_buffer(m_osd_handle, m_layer_dma[layer_index].dma_2, quad_dma_size);
@@ -51,7 +49,6 @@ void OsdDevice::Initialize(int width, int height) {
         LAYER_ATTR_S osd_layer;
         std::memset(&osd_layer, 0, sizeof(osd_layer));
 
-        // 保持你当前仓库这一版的层类型，不在这里再强改显示链路
         osd_layer.codeTYPE = SS_TYPE_QUADRANGLE;
         osd_layer.layer_data_QR.osd_buf.buf_type = BUFFER_TYPE_DMABUF;
         osd_layer.layer_data_QR.osd_buf.buf.fd_dmabuf = dma_fd;
@@ -64,6 +61,37 @@ void OsdDevice::Initialize(int width, int height) {
         osd_create_layer(m_osd_handle, (ssLAYER_HANDLE)layer_index, &osd_layer);
         osd_set_layer_buffer(m_osd_handle, (ssLAYER_HANDLE)layer_index, m_layer_dma[layer_index]);
     }
+
+    // 最后一层：专门给 texture / bitmap
+    {
+        int layer_index = OSD_LAYER_SIZE - 1;
+
+        // 这里沿用你原始注释里的大小
+        osd_alloc_buffer(m_osd_handle, m_layer_dma[layer_index].dma, 0x20000);
+        usleep(250000);
+
+        int dma_fd = osd_get_buffer_fd(m_osd_handle, m_layer_dma[layer_index].dma);
+
+        LAYER_ATTR_S osd_layer;
+        std::memset(&osd_layer, 0, sizeof(osd_layer));
+
+        osd_layer.codeTYPE = SS_TYPE_RLE;
+        osd_layer.layer_data_RLE.osd_buf.buf_type = BUFFER_TYPE_DMABUF;
+        osd_layer.layer_data_RLE.osd_buf.buf.fd_dmabuf = dma_fd;
+        osd_layer.layerStart.layer_start_x = 0;
+        osd_layer.layerStart.layer_start_y = 0;
+        osd_layer.layerSize.layer_width = m_width;
+        osd_layer.layerSize.layer_height = m_height;
+        osd_layer.layer_rgn = {TYPE_IMAGE, {m_width, m_height}};
+
+        osd_create_layer(m_osd_handle, (ssLAYER_HANDLE)layer_index, &osd_layer);
+        osd_set_layer_buffer(m_osd_handle, (ssLAYER_HANDLE)layer_index, m_layer_dma[layer_index]);
+    }
+
+    // 贴图测试
+    printf("[OSD-TEX] about to draw texture: %s\n", m_texture_path.c_str());
+    DrawTexture(m_texture_path.c_str(), OSD_LAYER_SIZE - 1);
+    printf("[OSD-TEX] DrawTexture finished\n");
 }
 
 void OsdDevice::Release() {
@@ -110,28 +138,18 @@ int OsdDevice::LoadLutFile(const char* filename) {
 }
 
 void OsdDevice::DrawTexture(const char* filename, int layer_id) {
+    printf("[OSD-TEX] DrawTexture enter, file=%s, layer=%d\n", filename, layer_id);
+
     BITMAP_INFO_S bm_info = {filename, TYPE_ALPHA100, {0, 0}};
-    osd_add_texture(m_osd_handle, &bm_info);
-    osd_flush_texture(m_osd_handle);
-    osd_lock_layer(m_osd_handle, (ssLAYER_HANDLE)layer_id, true);
-}
 
-// 新增：按位置组合多张字符位图。
-// 注意：这里假设你当前本地工程已经验证过 texture 这条链路是可用的。
-void OsdDevice::DrawTextures(const std::vector<OsdTextureItem>& items, int layer_id) {
-    osd_clean_layer(m_osd_handle, (ssLAYER_HANDLE)layer_id);
+    int ret = osd_add_texture(m_osd_handle, &bm_info);
+    printf("[OSD-TEX] osd_add_texture ret=%d\n", ret);
 
-    if (items.empty()) {
-        return;
-    }
+    ret = osd_flush_texture(m_osd_handle);
+    printf("[OSD-TEX] osd_flush_texture ret=%d\n", ret);
 
-    for (const auto& item : items) {
-        BITMAP_INFO_S bm_info = {item.path.c_str(), TYPE_ALPHA100, {item.x, item.y}};
-        osd_add_texture(m_osd_handle, &bm_info);
-    }
-
-    osd_flush_texture(m_osd_handle);
-    osd_lock_layer(m_osd_handle, (ssLAYER_HANDLE)layer_id, true);
+    ret = osd_lock_layer(m_osd_handle, (ssLAYER_HANDLE)layer_id, true);
+    printf("[OSD-TEX] osd_lock_layer ret=%d\n", ret);
 }
 
 void OsdDevice::Draw(std::vector<OsdQuadRangle> &quad_rangle) {
@@ -268,7 +286,6 @@ void OsdDevice::DrawQuads(const std::vector<std::array<std::array<float, 2>, 4>>
 
     osd_flush_quad_rangle_layer(m_osd_handle, (ssLAYER_HANDLE)layer_id);
 }
-
 } // namespace osd
 } // namespace device
 } // namespace sst
