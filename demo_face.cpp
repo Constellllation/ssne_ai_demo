@@ -3,9 +3,11 @@
  * 回退到不显示文字，仅保留二维码框和 QR_OK 位图测试
  */
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <condition_variable>
+#include <cctype>
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
@@ -344,10 +346,14 @@ void inference_thread_func(int img_height) {
                 draw_quads.push_back(draw_quad);
 
                 g_visualizer->DrawQuads(draw_quads);
+                //g_visualizer->DrawTextureItems(
+                   // BuildPayloadTextureItems(last_right_payload, draw_quad));
             } else {
                 g_right_smooth_quad.valid = false;
                 std::vector<QrQuad> empty_quads;
                 g_visualizer->DrawQuads(empty_quads);
+                //std::vector<sst::device::osd::OsdTextureItem> empty_texts;
+                //g_visualizer->DrawTextureItems(empty_texts);
             }
         }
     }

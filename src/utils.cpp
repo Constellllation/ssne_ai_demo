@@ -56,6 +56,11 @@ void VISUALIZER::DrawQuads(const std::vector<QrQuad>& quads) {
         1);
 }
 
+//void VISUALIZER::DrawTextureItems(
+//    const std::vector<sst::device::osd::OsdTextureItem>& items) {
+//    osd_device.DrawTextures(items, 4);
+//}
+
 void VISUALIZER::Release() {
     osd_device.Release();
 }

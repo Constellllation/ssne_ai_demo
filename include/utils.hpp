@@ -24,6 +24,8 @@ public:
     void Draw();
     void Draw(const std::vector<std::array<float, 4>>& boxes);
     void DrawQuads(const std::vector<QrQuad>& quads);
+//    void DrawTextureItems(
+//        const std::vector<sst::device::osd::OsdTextureItem>& items);
 
 private:
     sst::device::osd::OsdDevice osd_device;
