@@ -32,14 +32,16 @@ void OsdDevice::Initialize(int width, int height) {
     m_width = width;
     m_height = height;
 
-    LoadLutFile(m_osd_lut_path.c_str());
+    if (LoadLutFile(m_osd_lut_path.c_str()) != 0) {
+        std::cerr << "[OsdDevice] Failed to load LUT: " << m_osd_lut_path << std::endl;
+    }
 
     m_osd_handle = osd_open_device();
     osd_init_device(m_osd_handle, OSD_LAYER_SIZE, (char*)m_pcolor_lut);
 
-    // 前面 0 ~ OSD_LAYER_SIZE-2 层：画四边形框
-    int quad_dma_size = 0x20000;
-    for (int layer_index = 0; layer_index < OSD_LAYER_SIZE - 1; layer_index++) {
+    // 参考“位图示例”思路：只创建少量 GRAPHIC layer，再单独创建一个固定的 bitmap layer。
+    int quad_dma_size = 1024;
+    for (int layer_index = 0; layer_index < 2; layer_index++) {
         osd_alloc_buffer(m_osd_handle, m_layer_dma[layer_index].dma, quad_dma_size);
         usleep(250000);
         osd_alloc_buffer(m_osd_handle, m_layer_dma[layer_index].dma_2, quad_dma_size);
@@ -48,7 +50,6 @@ void OsdDevice::Initialize(int width, int height) {
 
         LAYER_ATTR_S osd_layer;
         std::memset(&osd_layer, 0, sizeof(osd_layer));
-
         osd_layer.codeTYPE = SS_TYPE_QUADRANGLE;
         osd_layer.layer_data_QR.osd_buf.buf_type = BUFFER_TYPE_DMABUF;
         osd_layer.layer_data_QR.osd_buf.buf.fd_dmabuf = dma_fd;
@@ -62,18 +63,17 @@ void OsdDevice::Initialize(int width, int height) {
         osd_set_layer_buffer(m_osd_handle, (ssLAYER_HANDLE)layer_index, m_layer_dma[layer_index]);
     }
 
-    // 最后一层：专门给 texture / bitmap
+    // 固定位图层 layer 2
     {
-        int layer_index = OSD_LAYER_SIZE - 1;
-
-        osd_alloc_buffer(m_osd_handle, m_layer_dma[layer_index].dma, 0x20000);
+        int layer_index = 2;
+        int texture_dma_size = 0x20000;
+        osd_alloc_buffer(m_osd_handle, m_layer_dma[layer_index].dma, texture_dma_size);
         usleep(250000);
-
+        osd_alloc_buffer(m_osd_handle, m_layer_dma[layer_index].dma_2, texture_dma_size);
         int dma_fd = osd_get_buffer_fd(m_osd_handle, m_layer_dma[layer_index].dma);
 
         LAYER_ATTR_S osd_layer;
         std::memset(&osd_layer, 0, sizeof(osd_layer));
-
         osd_layer.codeTYPE = SS_TYPE_RLE;
         osd_layer.layer_data_RLE.osd_buf.buf_type = BUFFER_TYPE_DMABUF;
         osd_layer.layer_data_RLE.osd_buf.buf.fd_dmabuf = dma_fd;
@@ -83,8 +83,10 @@ void OsdDevice::Initialize(int width, int height) {
         osd_layer.layerSize.layer_height = m_height;
         osd_layer.layer_rgn = {TYPE_IMAGE, {m_width, m_height}};
 
-        osd_create_layer(m_osd_handle, (ssLAYER_HANDLE)layer_index, &osd_layer);
-        osd_set_layer_buffer(m_osd_handle, (ssLAYER_HANDLE)layer_index, m_layer_dma[layer_index]);
+        int ret = osd_create_layer(m_osd_handle, (ssLAYER_HANDLE)layer_index, &osd_layer);
+        std::cout << "[OsdDevice] create bitmap layer ret=" << ret << std::endl;
+        ret = osd_set_layer_buffer(m_osd_handle, (ssLAYER_HANDLE)layer_index, m_layer_dma[layer_index]);
+        std::cout << "[OsdDevice] set bitmap layer buffer ret=" << ret << std::endl;
     }
 
     StartTextureTestThread();
@@ -138,88 +140,21 @@ int OsdDevice::LoadLutFile(const char* filename) {
     return 0;
 }
 
-int OsdDevice::ReloadLutFile(const char* filename) {
-    int ret = LoadLutFile(filename);
-    printf("[OSD-LUT] LoadLutFile(%s) ret=%d\n", filename, ret);
-    if (ret != 0) return ret;
+void OsdDevice::DrawBitmapLayerTexture(const char* filename, int layer_id, int x, int y,
+                                       fdevice::ALPHATYPE alpha) {
+    BITMAP_INFO_S bm_info;
+    bm_info.pSSbmpFile = filename;
+    bm_info.alpha = alpha;
+    bm_info.position.x = x;
+    bm_info.position.y = y;
 
-    ret = osd_init_device(m_osd_handle, OSD_LAYER_SIZE, (char*)m_pcolor_lut);
-    printf("[OSD-LUT] osd_init_device(%s) ret=%d\n", filename, ret);
-    return ret;
-}
+    std::cout << "[OSD-TEST] show " << filename << " on fixed bitmap layer" << std::endl;
+    int ret = osd_add_texture_layer(m_osd_handle, (ssLAYER_HANDLE)layer_id, &bm_info);
+    std::cout << "[OSD] osd_add_texture_layer(" << filename << ") ret=" << ret << std::endl;
+    if (ret != 0) return;
 
-void OsdDevice::DrawTexture(const char* filename, int layer_id) {
-    printf("[OSD-TEX] DrawTexture enter, file=%s, layer=%d\n", filename, layer_id);
-
-    BITMAP_INFO_S bm_info = {filename, TYPE_ALPHA100, {0, 0}};
-
-    int ret = osd_add_texture(m_osd_handle, &bm_info);
-    printf("[OSD-TEX] osd_add_texture ret=%d\n", ret);
-
-    ret = osd_flush_texture(m_osd_handle);
-    printf("[OSD-TEX] osd_flush_texture ret=%d\n", ret);
-
-    ret = osd_lock_layer(m_osd_handle, (ssLAYER_HANDLE)layer_id, true);
-    printf("[OSD-TEX] osd_lock_layer ret=%d\n", ret);
-}
-
-void OsdDevice::DrawTextureAt(const char* filename, int layer_id, int x, int y) {
-    printf("[OSD-TEX] DrawTextureAt enter, file=%s, layer=%d, x=%d, y=%d\n",
-           filename, layer_id, x, y);
-
-    BITMAP_INFO_S bm_info = {filename, TYPE_ALPHA100, {x, y}};
-
-    int ret = osd_add_texture(m_osd_handle, &bm_info);
-    printf("[OSD-TEX] osd_add_texture ret=%d\n", ret);
-
-    ret = osd_flush_texture(m_osd_handle);
-    printf("[OSD-TEX] osd_flush_texture ret=%d\n", ret);
-
-    ret = osd_lock_layer(m_osd_handle, (ssLAYER_HANDLE)layer_id, true);
-    printf("[OSD-TEX] osd_lock_layer ret=%d\n", ret);
-}
-
-void OsdDevice::ClearTextureLayer(int layer_id) {
-    int ret = osd_clean_layer(m_osd_handle, (ssLAYER_HANDLE)layer_id);
-    printf("[OSD-TEX] osd_clean_layer ret=%d\n", ret);
-}
-
-void OsdDevice::RecreateTextureLayer(int layer_id) {
-    printf("[OSD-TEX] RecreateTextureLayer begin, layer=%d\n", layer_id);
-
-    osd_destroy_layer(m_osd_handle, (ssLAYER_HANDLE)layer_id);
-
-    if (m_layer_dma[layer_id].dma != nullptr) {
-        osd_delete_buffer(m_osd_handle, m_layer_dma[layer_id].dma);
-        m_layer_dma[layer_id].dma = nullptr;
-    }
-    if (m_layer_dma[layer_id].dma_2 != nullptr) {
-        osd_delete_buffer(m_osd_handle, m_layer_dma[layer_id].dma_2);
-        m_layer_dma[layer_id].dma_2 = nullptr;
-    }
-
-    osd_alloc_buffer(m_osd_handle, m_layer_dma[layer_id].dma, 0x20000);
-    usleep(250000);
-
-    int dma_fd = osd_get_buffer_fd(m_osd_handle, m_layer_dma[layer_id].dma);
-
-    LAYER_ATTR_S osd_layer;
-    std::memset(&osd_layer, 0, sizeof(osd_layer));
-
-    osd_layer.codeTYPE = SS_TYPE_RLE;
-    osd_layer.layer_data_RLE.osd_buf.buf_type = BUFFER_TYPE_DMABUF;
-    osd_layer.layer_data_RLE.osd_buf.buf.fd_dmabuf = dma_fd;
-    osd_layer.layerStart.layer_start_x = 0;
-    osd_layer.layerStart.layer_start_y = 0;
-    osd_layer.layerSize.layer_width = m_width;
-    osd_layer.layerSize.layer_height = m_height;
-    osd_layer.layer_rgn = {TYPE_IMAGE, {m_width, m_height}};
-
-    int ret = osd_create_layer(m_osd_handle, (ssLAYER_HANDLE)layer_id, &osd_layer);
-    printf("[OSD-TEX] recreate osd_create_layer ret=%d\n", ret);
-
-    ret = osd_set_layer_buffer(m_osd_handle, (ssLAYER_HANDLE)layer_id, m_layer_dma[layer_id]);
-    printf("[OSD-TEX] recreate osd_set_layer_buffer ret=%d\n", ret);
+    ret = osd_flush_texture_layer(m_osd_handle, (ssLAYER_HANDLE)layer_id);
+    std::cout << "[OSD] osd_flush_texture_layer ret=" << ret << std::endl;
 }
 
 void* OsdDevice::TextureTestThreadEntry(void* arg) {
@@ -233,45 +168,21 @@ void* OsdDevice::TextureTestThreadEntry(void* arg) {
 void OsdDevice::StartTextureTestThread() {
     pthread_t tid;
     int ret = pthread_create(&tid, nullptr, OsdDevice::TextureTestThreadEntry, this);
-    printf("[OSD-TEST] pthread_create ret=%d\n", ret);
+    std::cout << "[OSD-TEST] pthread_create ret=" << ret << std::endl;
     if (ret == 0) {
         pthread_detach(tid);
     }
 }
 
 void OsdDevice::RunTextureLutTests() {
-    const int layer_id = OSD_LAYER_SIZE - 1;
+    const int layer_id = 2;
 
-    // 先等底图正常出来
     sleep(2);
 
-    // 共享 LUT
-    if (ReloadLutFile(m_shared_qr_lut_path.c_str()) != 0) {
-        printf("[OSD-TEST] shared QR LUT load failed\n");
-        return;
-    }
-
-    // 高速交替显示 Q / R
-    // 这里先不要真打到 180fps，先用较慢频率验证“看起来会不会叠加”
-    // 后面再逐渐把 usleep 调小
-    for (int i = 0; i < 120; ++i) {
-        // 显示 Q
-        RecreateTextureLayer(layer_id);
-        if (ReloadLutFile(m_shared_qr_lut_path.c_str()) == 0) {
-            DrawTextureAt(m_char_q_path.c_str(), layer_id, 180, 120);
-        }
-
-        // 显示 R
-        RecreateTextureLayer(layer_id);
-        if (ReloadLutFile(m_shared_qr_lut_path.c_str()) == 0) {
-            DrawTextureAt(m_char_r_path.c_str(), layer_id, 260, 120);
-        }
-    }
-
-    // 最后停在 QR_OK，方便你确认线程跑完
-    RecreateTextureLayer(layer_id);
-    if (ReloadLutFile(m_osd_lut_path.c_str()) == 0) {
-        DrawTexture(m_texture_path.c_str(), layer_id);
+    // 按“位图示例”的方式：同一个固定 bitmap layer，按帧切换不同已编码位图。
+    for (int i = 0; i < 60; ++i) {
+        DrawBitmapLayerTexture(m_char_q_path.c_str(), layer_id, 180, 120);
+        DrawBitmapLayerTexture(m_char_r_path.c_str(), layer_id, 260, 120);
     }
 }
 

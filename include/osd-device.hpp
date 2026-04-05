@@ -55,31 +55,26 @@ public:
 
 private:
     int LoadLutFile(const char* filename);
-    int ReloadLutFile(const char* filename);
-    void DrawTexture(const char* filename, int layer_id);
-    void DrawTextureAt(const char* filename, int layer_id, int x, int y);
-    void ClearTextureLayer(int layer_id);
+    void DrawBitmapLayerTexture(const char* filename, int layer_id, int x, int y,
+                                fdevice::ALPHATYPE alpha = fdevice::TYPE_ALPHA100);
     void RunTextureLutTests();
-    void RecreateTextureLayer(int layer_id);
     static void* TextureTestThreadEntry(void* arg);
 
     void GenQrangleBox(std::array<float, 4>& det, int border);
     void GenQranglePolygon(const std::array<std::array<float, 2>, 4>& pts, int border);
 
 private:
-    handle_t m_osd_handle;
-    std::string m_osd_lut_path = "/app_demo/app_assets/qr_ok_test_colorLUT.sscl";
-    std::string m_texture_path = "/app_demo/app_assets/qr_ok_test.ssbmp";
+    handle_t m_osd_handle = 0;
+    std::string m_osd_lut_path = "/app_demo/app_assets/shared_colorLUT.sscl";
 
-    // 交替显示 Q / R
+    // 轮播显示 Q / R，验证固定 bitmap layer 的按帧切换
     std::string m_char_q_path = "/app_demo/app_assets/char_Q.ssbmp";
     std::string m_char_r_path = "/app_demo/app_assets/char_R.ssbmp";
-    std::string m_shared_qr_lut_path = "/app_demo/app_assets/shared_colorLUT.sscl";
 
     uint8_t *m_pcolor_lut = nullptr;
     int m_file_size = 0;
-    int m_height, m_width;
-    fdevice::DMA_BUFFER_ATTR_S m_layer_dma[OSD_LAYER_SIZE];
+    int m_height = 0, m_width = 0;
+    fdevice::DMA_BUFFER_ATTR_S m_layer_dma[OSD_LAYER_SIZE] = {};
     fdevice::VERTEXS_S m_qrangle_out = {0}, m_qrangle_in = {0};
 };
 
