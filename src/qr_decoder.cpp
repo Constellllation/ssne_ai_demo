@@ -8,8 +8,28 @@ QrDecoder::QrDecoder()
     if (scanner_) {
         zbar::zbar_image_scanner_set_config(
             scanner_, zbar::ZBAR_NONE, zbar::ZBAR_CFG_ENABLE, 0);
+
         zbar::zbar_image_scanner_set_config(
             scanner_, zbar::ZBAR_QRCODE, zbar::ZBAR_CFG_ENABLE, 1);
+
+        zbar::zbar_image_scanner_set_config(
+            scanner_, zbar::ZBAR_EAN8, zbar::ZBAR_CFG_ENABLE, 1);
+        zbar::zbar_image_scanner_set_config(
+            scanner_, zbar::ZBAR_UPCE, zbar::ZBAR_CFG_ENABLE, 1);
+        zbar::zbar_image_scanner_set_config(
+            scanner_, zbar::ZBAR_UPCA, zbar::ZBAR_CFG_ENABLE, 1);
+        zbar::zbar_image_scanner_set_config(
+            scanner_, zbar::ZBAR_EAN13, zbar::ZBAR_CFG_ENABLE, 1);
+        zbar::zbar_image_scanner_set_config(
+            scanner_, zbar::ZBAR_I25, zbar::ZBAR_CFG_ENABLE, 1);
+        zbar::zbar_image_scanner_set_config(
+            scanner_, zbar::ZBAR_CODABAR, zbar::ZBAR_CFG_ENABLE, 1);
+        zbar::zbar_image_scanner_set_config(
+            scanner_, zbar::ZBAR_CODE39, zbar::ZBAR_CFG_ENABLE, 1);
+        zbar::zbar_image_scanner_set_config(
+            scanner_, zbar::ZBAR_CODE93, zbar::ZBAR_CFG_ENABLE, 1);
+        zbar::zbar_image_scanner_set_config(
+            scanner_, zbar::ZBAR_CODE128, zbar::ZBAR_CFG_ENABLE, 1);
     }
 }
 
@@ -70,6 +90,7 @@ bool QrDecoder::DecodeY800(const uint8_t* gray,
 
             const zbar::zbar_symbol_type_t sym_type =
                 zbar::zbar_symbol_get_type(symbol);
+            out.sym_type = static_cast<int>(sym_type);
             out.type = zbar::zbar_get_symbol_name(sym_type);
 
             const char* data = zbar::zbar_symbol_get_data(symbol);

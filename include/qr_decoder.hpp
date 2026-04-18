@@ -9,6 +9,8 @@
 #include "zbar.h"
 
 struct QrDecodeResult {
+    int sym_type = 0;
+
     std::string type;
     std::string data;
 

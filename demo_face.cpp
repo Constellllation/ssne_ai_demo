@@ -212,6 +212,7 @@ static void PushQrQuads(const std::vector<QrDecodeResult>& qr_results,
     const float cy = 240.0f;
 
     for (const auto& r : qr_results) {
+        if (r.sym_type != static_cast<int>(zbar::ZBAR_QRCODE)) continue;
         if (!r.valid_polygon) continue;
 
         QrQuad q;
