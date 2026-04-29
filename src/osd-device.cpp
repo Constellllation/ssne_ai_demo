@@ -89,7 +89,8 @@ void OsdDevice::Initialize(int width, int height) {
         std::cout << "[OsdDevice] set bitmap layer buffer ret=" << ret << std::endl;
     }
 
-    StartTextureTestThread();
+    // 关闭位图交替显示测试，避免 layer 2 一直刷 char_Q/char_R 影响语音响应速度测试。
+    // StartTextureTestThread();
 }
 
 void OsdDevice::Release() {

@@ -1,6 +1,10 @@
 /*
  * Revert package: demo_face.cpp
  * 回退到不显示文字，仅保留二维码框和 QR_OK 位图测试
+ *
+ * JQ8400 binary slow-send patch:
+ *   基于键盘监听可用版本；UART_TX0 恢复发送真正二进制命令。
+ *   为验证稳定性，默认逐字节发送，并在命令之间加入 200ms 间隔。
  */
 
 #include <algorithm>
@@ -22,9 +26,14 @@
 #include "include/common.hpp"
 #include "include/utils.hpp"
 #include "include/qr_decoder.hpp"
+#include "include/jq8400_uart.hpp"
+
 
 using namespace std;
 
+// 保持昨天成功版本的行为：启动不自动播，不随 QR 触发；键盘输入才发命令。
+static const bool kEnableJq8400StartupTest = false;
+static const bool kEnableJq8400PlayOnNewQr = false;
 std::mutex mtx_image;
 std::condition_variable cv_image_ready;
 std::atomic<bool> stop_inference(false);
@@ -74,12 +83,21 @@ std::mutex g_mtx;
 void keyboard_listener() {
     std::string input;
     std::cout << "键盘监听线程已启动。\n"
-              << "q:退出\n"
-              << "a/d: DX -/+ 1\n"
-              << "j/l: KX -/+ 0.01\n"
-              << "w/s: DY -/+ 1\n"
-              << "i/k: KY -/+ 0.01\n"
-              << "p: 打印当前参数\n";
+              << "语音测试命令：\n"
+              << "  1/2/3/... : 播放对应序号音频\n"
+              << "  n/next    : 下一首\n"
+              << "  b/prev    : 上一首\n"
+              << "  v30       : 音量30\n"
+              << "  v20       : 音量20\n"
+              << "  auto      : 连续发送 flash/v20/1/2/3 二进制命令\n"
+              << "  h         : 打印语音命令帮助\n"
+              << "原二维码框调参命令：\n"
+              << "  a/d: DX -/+ 1\n"
+              << "  j/l: KX -/+ 0.01\n"
+              << "  w/s: DY -/+ 1\n"
+              << "  i/k: KY -/+ 0.01\n"
+              << "  p: 打印当前参数\n"
+              << "  q: 退出\n";
 
     while (true) {
         std::cin >> input;
@@ -89,6 +107,11 @@ void keyboard_listener() {
             g_exit_flag = true;
             std::cout << "检测到退出指令，通知主线程退出..." << std::endl;
             break;
+        }
+
+        // 优先处理语音模块命令：输入 1 回车就发送 AA 07 02 00 01 B4。
+        if (TryHandleJqKeyboardCommand(input)) {
+            continue;
         }
 
         bool changed = false;
@@ -105,7 +128,7 @@ void keyboard_listener() {
             else if (input == "k") { g_box_params.ky += 0.01f; changed = true; }
             else if (input == "p") {}
             else {
-                std::cout << "无效输入。可用: a d j l w s i k p q" << std::endl;
+                std::cout << "无效输入。语音: 1/2/3/n/next/b/prev/v30/v20/h；调参: a d j l w s i k p q" << std::endl;
             }
         }
 
@@ -326,6 +349,9 @@ void inference_thread_func(int img_height) {
                                    qr_results[i].data.c_str());
                         }
                         last_right_payload = current_payload;
+                        if (kEnableJq8400PlayOnNewQr && Jq8400IsReady()) {
+                            JqPlayTrack(1);
+                        }
                     }
 
                     PushQrQuads(qr_results, 0, &local_quads);
@@ -385,6 +411,10 @@ int main() {
     cout << "[INFO] QR mode initialized!" << endl;
     PrintBoxParams();
     usleep(200000);
+
+    if (InitJq8400Uart() && kEnableJq8400StartupTest) {
+        RunJq8400StartupTest();
+    }
 
     std::thread inference_thread(inference_thread_func, img_height);
     cout << "[INFO] QR inference thread started!" << endl;
@@ -458,6 +488,7 @@ int main() {
         listener_thread.join();
     }
 
+    CloseJq8400Uart();
     visualizer.Release();
     processor.Release();
 

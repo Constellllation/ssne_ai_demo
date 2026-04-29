@@ -22,7 +22,7 @@ add_executable(ssne_ai_demo
     ${PROJECT_SOURCE_DIR}/demo_face.cpp
 )
 
-# 添加 src 下所有 cpp（包含 qr_decoder.cpp）
+# 添加 src 下所有 cpp（包含 qr_decoder.cpp / jq8400_uart.cpp）
 file(GLOB SRC_FILES "${SRC_DIR}/*.cpp")
 target_sources(ssne_ai_demo PRIVATE ${SRC_FILES})
 
@@ -48,6 +48,7 @@ target_link_libraries(ssne_ai_demo
     ${M1_ZLOG_LIB}
     ${M1_OSD_LIB}
     ${M1_EMB_LIB}
+    ${M1_UART_LIB}
     ${ZBAR_STATIC_LIB}
     pthread
     m
